@@ -1,0 +1,24 @@
+Default: &defaults
+  user: widefield
+  password: widefield
+  host: localhost
+  database: widefield
+  connections: 10
+
+Development:
+  <<: *defaults
+
+Testing:
+  database: widefield_test
+  <<: *defaults
+
+Staging:
+  database: widefield_staging
+  connections: 100
+  <<: *defaults
+
+Production:
+  database: widefield_production
+  connections: 100
+  host: localhost
+  <<: *defaults

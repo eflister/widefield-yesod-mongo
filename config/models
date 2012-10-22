@@ -1,0 +1,27 @@
+User
+    ident Text
+    password Text Maybe
+    UniqueUser ident
+Email
+    email Text
+    user UserId Maybe
+    verkey Text Maybe
+    UniqueEmail email
+
+Person
+    name String
+    age Int
+    deriving Show
+
+SubjectRec -- interferes w/stuff in Foundation
+    name String
+    amount Double
+    box BoxId
+    dir String
+    UniqueSubjetName name
+
+Box
+    name String
+    UniqueBoxName name
+
+ -- By default this file is used in Model.hs (which is imported by Foundation.hs)
