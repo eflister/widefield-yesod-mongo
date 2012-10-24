@@ -4,6 +4,7 @@ module Handler.Grid
 
 import Import
 import qualified Data.Text as T
+import Data.List.Split
 
 getGridR :: Handler RepHtml
 getGridR = defaultLayout $ do
@@ -59,7 +60,7 @@ var dojoConfig = {
 
     let dojoA = [("data-dojo-config","async: true")]
 
-    -- addScriptAttrs (StaticR $ StaticRoute ["cpm_packages/dojo/dojo.js"] []) dojoA --  encodes '/' as '%2f' and we get 403 forbidden
+    -- addScriptAttrs (StaticR $ StaticRoute (T.pack <$> splitOn "/" "cpm_packages/dojo/dojo.js") []) dojoA --  "x/y/z" encodes '/' as '%2f' and we get 403 forbidden
     -- equiv w/compile-time existence check, but have to cabal clean to pick this up
     addScriptAttrs (StaticR cpm_packages_dojo_dojo_js) dojoA -- if use cpm_packages/dojo.js instead of cpm_packages/dojo/dojo.js, get "define undefined"
 

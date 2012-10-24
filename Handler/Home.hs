@@ -1,19 +1,28 @@
 {-# LANGUAGE TupleSections, OverloadedStrings, ScopedTypeVariables, RankNTypes #-}
 module Handler.Home -- (Subject, TrialRange, Analysis) -- trying to export these to Foundation.hs doesn't work...
-    where
+    ( Subject
+    , TrialRange
+    , Analysis
+    , getHomeR
+    , postHomeR
+    , getOverviewR
+    , getImageR 
+    ) where
 
 import Import
 import System.Directory
 import System.FilePath
 import Control.Monad
 import System.Process -- some commands require that we run from mingw -- matlab ok in dos, dir isn't
-import Prelude (readFile, head)
+import Prelude (head)
 import Data.List.Split
 import Data.Maybe
 import Control.Shortcircuit hiding ((&&))
 import Data.List hiding (insert)
 import Data.Function
 import Control.Arrow
+import Data.Text.IO (readFile)
+import qualified Data.Text as T
 
 instance Show FileInfo
 
@@ -51,7 +60,7 @@ content (handlerName :: Text)
                 let log = "log.txt"
                 void $ rawSystem "matlab" ["-nodesktop", "-nosplash", "-wait", "-logfile", log, "-r", "x=2;x+2,quit"]
                 lg <- readFile log
-                return $ splitOn "\n" lg
+                return . splitOn "\n" $ T.unpack lg
             people <- lift . runDB $ do
                 orM ( do liftIO $ putStrLn "checking"
                          (entityVal <$>) <$> (selectList [PersonName ==. "Stacy"] [])
