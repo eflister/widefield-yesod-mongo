@@ -19,26 +19,13 @@ postPersonR = gridForm True peopleGrid
 
 peopleGrid :: Maybe PersonId 
            -> GHandler App App a
-{-
-peopleGrid = itemGrid PersonR PeopleR
-    [ ("name", personName      , Nothing                         , False)
-    , ("age" , show . personAge, Just (intField, PersonAge, True), True )
-    ]
--}
-
-
-
-
 
 peopleGrid = itemGrid PersonR PeopleR . getZipList $ GridField 
     <$> ZipList ["name"                                       , "age"                                     ] 
     <*> ZipList [personName                                   , show . personAge                          ] -- make this line existential somehow?  Show s => [Person -> s]
 --  <*> ZipList [Just $ EditableRec textField PersonName False, Just $ EditableRec intField PersonAge True]
-    <*> ZipList [Nothing                                      , Nothing                                   ]
+    <*> ZipList [Nothing                                      , Just $ EditableRec intField PersonAge True] -- fields not returning same type can't be in same list :(
     <*> ZipList [False                                        , True                                      ]
-
-
-
 
 data GridField a b c = 
     GridField { label    :: Text
@@ -48,16 +35,10 @@ data GridField a b c =
               }
 
 data EditableRec b c =
-	EditableRec { htmlField :: forall sub master . Field sub master b
+	EditableRec { htmlField :: forall sub master . (RenderMessage master FormMessage, Integral b) => Field sub master b
                 , dbField   :: EntityField Person c
                 , required  :: Bool
                 }
-
-
-
-
-
-
 
 itemGrid :: (RenderMessage master FormMessage)
          => (PersonId -> Route App)
@@ -74,13 +55,12 @@ itemGrid indR groupR fields sel = do
     return (grid, indR, groupR, fields)
 -}
          
-gridForm :: (RenderMessage master FormMessage)
+gridForm :: () --(RenderMessage master FormMessage)
          => Bool
-         -> (Maybe PersonId -> GHandler sub master a)
+         -> (Maybe PersonId -> GHandler App App ((GHandler App App (Markup -> MForm App App (FormResult [a], b))), (PersonId -> Route App), Route App, [GridField Person b a]))
          -> PersonId
          -> Handler RepHtml
-gridForm = undefined
-{-
+--gridForm = undefined
 gridForm post gridder pid = do
     (grid, indR, groupR, fields) <- gridder $ Just pid
     let done w e = defaultLayout [whamlet|
@@ -100,7 +80,7 @@ $# this form tag closes immediately, can it not cross other tags?
         else do
             (w, e) <- generateFormPost =<< grid
             done w e
--}
+
 
 makeGrid = undefined
 {-
