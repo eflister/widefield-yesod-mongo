@@ -7,9 +7,12 @@ import Import
 import Text.Blaze
 import Control.Applicative
 import Data.Maybe
+import Data.Traversable
 
 getPeopleR :: Handler RepHtml
-getPeopleR = undefined
+getPeopleR = do
+    (grid, _, _, _) <- peopleGrid Nothing
+    defaultLayout . fst =<< generateFormPost =<< grid
 
 getPersonR :: PersonId -> Handler RepHtml
 getPersonR = gridForm False peopleGrid
@@ -18,7 +21,7 @@ postPersonR :: PersonId -> Handler RepHtml
 postPersonR = gridForm True peopleGrid
 
 -- supply Person-specific details to gridForm
-peopleGrid :: () -- ToWidget App App a)
+peopleGrid :: ()
            => Maybe PersonId 
            -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
                                , (PersonId -> Route App)
@@ -50,8 +53,7 @@ data Editable =
              }
 
 -- lookup all items of a given type in the database
-itemGrid :: ( -- ToWidget App App b
-            )
+itemGrid :: ()
          => (PersonId -> Route App)
          -> Route App
          -> [GridField]
@@ -61,17 +63,15 @@ itemGrid :: ( -- ToWidget App App b
                              , Route App
                              , [GridField])
 itemGrid indR groupR fields sel = do
-    let items = undefined
-    -- items <- {- lift . -} runDB $ selectList [] []
+    items <- runDB $ selectList [] []
     liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let grid = makeGrid indR groupR sel items fields
     return (grid, indR, groupR, fields)
 
 -- run a form, extract results, and update the database
-gridForm :: ( ToWidget App App b
-            ) --(RenderMessage master FormMessage)
+gridForm :: ()
          => Bool
-         -> (Maybe PersonId -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], b))
+         -> (Maybe PersonId -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
                                                 , (PersonId -> Route App)
                                                 , Route App
                                                 , [GridField]
@@ -98,11 +98,28 @@ $# this form tag closes immediately, can it not cross other tags?
             (w, e) <- generateFormPost =<< grid
             done w e
         
-getDefaults sel items fields = undefined
-getDefaultedWidgets mDefaults fields = undefined
+getDefaults :: Maybe PersonId 
+            -> [Entity Person] 
+            -> [GridField] 
+            -> GHandler App App [Maybe Int]
+getDefaults sel items fields = return []
+
+getDefaultedWidgets :: [Maybe Int] 
+                    -> [GridField] 
+                    -> MForm App App ( FormResult [Int]
+                                     , [(Text, GWidget App App ())]
+                                     )
+getDefaultedWidgets mDefaults fields = do
+    pairs <- mreq intField "unused" <$> mDefaults
+    return (sequenceA $ fst <$> pairs, [])
+{-
+getDefaultedWidgets mDefaults fields = do
+    (rs, ws) <- mreq intField "unused" <$> mDefaults
+    return (sequenceA rs, [])
+-}
 
 -- generate a grid showing the fields for items passed in, possibly including a form for editing a selected one
-makeGrid :: () -- ToWidget App App b)
+makeGrid :: ()
          => (PersonId -> Route App)
          -> Route App
          -> Maybe PersonId
