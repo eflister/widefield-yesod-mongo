@@ -7,7 +7,7 @@ import Import
 import Text.Blaze
 import Control.Applicative
 import Data.Maybe
-import Data.Traversable
+import Data.Traversable (sequenceA)
 
 getPeopleR :: Handler RepHtml
 getPeopleR = do
@@ -33,7 +33,7 @@ peopleGrid = itemGrid PersonR PeopleR . getZipList $ GridField
     <*> ZipList [personName                                , show . personAge                       ] -- make this line existential somehow?  Show s => [Person -> s]
 --  <*> ZipList [Just $ Editable textField PersonName False, Just $ Editable intField PersonAge True]
     <*> ZipList [Nothing                                   , Just $ Editable intField PersonAge True] -- fields not returning same type can't be in same list :(
-    <*> ZipList [False                                     , True                                   ]
+    <*> ZipList [False                                     , False                                  ]
 
 ----------------------------------------------------------------------
 -- everything below here designed to be abstractable from Person
@@ -81,7 +81,6 @@ gridForm :: ()
 gridForm post gridder pid = do
     (grid, indR, groupR, fields) <- gridder $ Just pid
     let done w e = defaultLayout [whamlet|
-$# this form tag closes immediately, can it not cross other tags?
 <form method=post action=@{indR pid} enctype=#{e}>
     ^{w}
 |]   
@@ -110,13 +109,8 @@ getDefaultedWidgets :: [Maybe Int]
                                      , [(Text, GWidget App App ())]
                                      )
 getDefaultedWidgets mDefaults fields = do
-    pairs <- mreq intField "unused" <$> mDefaults
+    pairs <- mapM (mreq intField "unused") mDefaults
     return (sequenceA $ fst <$> pairs, [])
-{-
-getDefaultedWidgets mDefaults fields = do
-    (rs, ws) <- mreq intField "unused" <$> mDefaults
-    return (sequenceA rs, [])
--}
 
 -- generate a grid showing the fields for items passed in, possibly including a form for editing a selected one
 makeGrid :: ()
