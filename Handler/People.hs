@@ -8,6 +8,8 @@ import Text.Blaze
 import Control.Applicative
 import Data.Maybe
 import Data.Traversable (sequenceA)
+import Control.Monad
+import Prelude (head)
 
 getPeopleR :: Handler RepHtml
 getPeopleR = do
@@ -47,9 +49,9 @@ data GridField =
               }
 
 data Editable =
-	Editable { htmlField :: Field App App Int
-             , dbField   :: EntityField Person Int
-             , required  :: Bool
+	Editable { uiField  :: Field App App Int
+             , dbField  :: EntityField Person Int
+             , required :: Bool
              }
 
 -- lookup all items of a given type in the database
@@ -64,7 +66,7 @@ itemGrid :: ()
                              , [GridField])
 itemGrid indR groupR fields sel = do
     items <- runDB $ selectList [] []
-    liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
+    -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let grid = makeGrid indR groupR sel items fields
     return (grid, indR, groupR, fields)
 
@@ -86,31 +88,34 @@ gridForm post gridder pid = do
 |]   
     if post 
         then do
-            ((r, w), e) <- runFormPost =<< grid -- will this give results for optional and untouched fields?  we depend on the order, so...
+            ((r, w), e) <- runFormPost =<< grid
             case r of
                 FormSuccess rs -> do
-                    runDB $ update pid . getZipList $ ZipList ((=.) <$> dbField <$> mapMaybe editable fields) <*> ZipList rs
+                    runDB $ update pid . getZipList $ ZipList ((=.) <$> dbField <$> snd <$> getEditable fields) <*> ZipList rs
                     setMessage "success"
                     redirect groupR 
                 _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
         else do
             (w, e) <- generateFormPost =<< grid
             done w e
-        
-getDefaults :: Maybe PersonId 
-            -> [Entity Person] 
-            -> [GridField] 
-            -> GHandler App App [Maybe Int]
-getDefaults sel items fields = return []
+      
+-- split these up into requireds and optionals so we can keep their form results/types separate
+getEditable fs = (\x -> (x, fromJust $ editable x)) <$> filter (isJust . editable) fs
 
-getDefaultedWidgets :: [Maybe Int] 
-                    -> [GridField] 
-                    -> MForm App App ( FormResult [Int]
-                                     , [(Text, GWidget App App ())]
-                                     )
-getDefaultedWidgets mDefaults fields = do
-    pairs <- mapM (mreq intField "unused") mDefaults
-    return (sequenceA $ fst <$> pairs, [])
+getDefaultedViews :: Maybe PersonId 
+                  -> [Entity Person] 
+                  -> [GridField] 
+                  -> MForm App App ( FormResult [Int]
+                                   , [(Text, FieldView App App)]
+                                   )
+getDefaultedViews sel items fields = do
+    let this  = entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
+        (e,f) = unzip $ getEditable fields
+--  to mix required/optional, need separate lists from getEditable to share with gridForm (who uses them to write to the db)
+--  (rs, vs) <- unzip <$> zipWithM (\x -> (if required x then mreq else mopt) (uiField x) "unused" $ extract y <$> this) f e
+--  have to hack defaulting w/read until we can have heterogeneous list of extractors
+    (rs, vs) <- unzip <$> zipWithM (\x y -> mreq (uiField x) "unused" $ read . extract y <$> this) f e
+    return (sequenceA rs, zip (label <$> e) vs)
 
 -- generate a grid showing the fields for items passed in, possibly including a form for editing a selected one
 makeGrid :: ()
@@ -120,12 +125,11 @@ makeGrid :: ()
          -> [Entity Person]
          -> [GridField]
          -> GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
-makeGrid indR groupR sel items fields = dMForm <$> getDefaults sel items fields
-    where dMForm mDefaults extra = do
-            (rs, ws) <- getDefaultedWidgets mDefaults fields
-            let getWidget f = fromJust $ lookup (label f) ws -- what do if can't find?
-                disp i f    = (if needShow f then show else id) $ extract f $ entityVal i
-                dispRow i   = [whamlet|
+makeGrid indR groupR sel items fields = return $ \extra -> do
+            (rs, vs) <- getDefaultedViews sel items fields
+            let getView f = fromJust $ lookup (label f) vs -- what do if can't find?
+                disp i f  = (if needShow f then show else id) $ extract f $ entityVal i
+                dispRow i = [whamlet|
 $forall f <- fields
     <td>
         #{disp i f}
@@ -133,6 +137,7 @@ $forall f <- fields
     <a href=@{indR $ entityKey i}> edit  
 |]
                 widget = [whamlet|
+^{extra}
 <table>
     <thead>
         <tr>
@@ -142,18 +147,20 @@ $forall f <- fields
     <tbody>
         $forall i <- items
             <tr>        
-                ^{dispRow i} 
-|]
-            return (rs, widget)
-
-{-
-                $maybe (key, w, x, e) <- sel
+                $maybe key <- sel
                     $if key == entityKey i
-                            ^{x}
                             $forall f <- fields
                                 <td>
                                     $maybe _ <- editable f
-                                        ^{getWidget f w}
+                                        $with view <- getView f
+                                            $#adapted from renderDivs
+                                            <div :fvRequired view:.required :not $ fvRequired view:.optional>
+                                                <label for=#{fvId view}>
+                                                    $maybe tt <- fvTooltip view
+                                                        <div .tooltip>#{tt}
+                                                    ^{fvInput view}
+                                                    $maybe err <- fvErrors view
+                                                        <div .errors style="color:red">#{err}
                                     $nothing
                                         #{disp i f}
                             <td>
@@ -165,23 +172,4 @@ $forall f <- fields
                 $nothing
                     ^{dispRow i}                                
 |]
--}
-
-personAgeMForm :: (PersistStore (YesodPersistBackend master) (GHandler sub master), YesodPersist master, RenderMessage master FormMessage) 
-     => Key (YesodPersistBackend master) (PersonGeneric backend) -- PersonId
-     -> GHandler sub master (Html -> MForm sub master (FormResult Int, GWidget sub master ()))
-personAgeMForm pid = dMForm <$> (personAge <$>) <$> (runDB $ get pid)
-    where dMForm mage extra = do
-            (ageRes, ageView) <- mreq intField "unused" mage
-            let widget = [whamlet|
-  $#adapted from renderDivs
-  #{extra}
-  <div :fvRequired ageView:.required :not $ fvRequired ageView:.optional>
-        <label for=#{fvId ageView}>
-            $maybe tt <- fvTooltip ageView
-                <div .tooltip>#{tt}
-            ^{fvInput ageView}
-            $maybe err <- fvErrors ageView
-                <div .errors style="color:red">#{err}
-|]
-            return (ageRes, widget)
+            return (rs, widget)
