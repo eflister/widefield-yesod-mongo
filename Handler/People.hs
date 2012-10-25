@@ -12,15 +12,15 @@ getPeopleR :: Handler RepHtml
 getPeopleR = undefined
 
 getPersonR :: PersonId -> Handler RepHtml
-getPersonR = undefined -- gridForm False peopleGrid
+getPersonR = gridForm False peopleGrid
 
 postPersonR :: PersonId -> Handler RepHtml
-postPersonR = undefined -- gridForm True peopleGrid
+postPersonR = gridForm True peopleGrid
 
 -- supply Person-specific details to gridForm
-peopleGrid :: (ToWidget App App a)
+peopleGrid :: () -- ToWidget App App a)
            => Maybe PersonId 
-           -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], a))
+           -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
                                , (PersonId -> Route App)
                                , Route App
                                , [GridField]
@@ -31,6 +31,10 @@ peopleGrid = itemGrid PersonR PeopleR . getZipList $ GridField
 --  <*> ZipList [Just $ Editable textField PersonName False, Just $ Editable intField PersonAge True]
     <*> ZipList [Nothing                                   , Just $ Editable intField PersonAge True] -- fields not returning same type can't be in same list :(
     <*> ZipList [False                                     , True                                   ]
+
+----------------------------------------------------------------------
+-- everything below here designed to be abstractable from Person
+----------------------------------------------------------------------
 
 data GridField = 
     GridField { label    :: Text
@@ -46,13 +50,13 @@ data Editable =
              }
 
 -- lookup all items of a given type in the database
-itemGrid :: ( ToWidget App App b
+itemGrid :: ( -- ToWidget App App b
             )
          => (PersonId -> Route App)
          -> Route App
          -> [GridField]
          -> Maybe PersonId
-         -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], b))
+         -> GHandler App App ( GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
                              , (PersonId -> Route App)
                              , Route App
                              , [GridField])
@@ -94,27 +98,30 @@ $# this form tag closes immediately, can it not cross other tags?
             (w, e) <- generateFormPost =<< grid
             done w e
         
+getDefaults sel items fields = undefined
+getDefaultedWidgets mDefaults fields = undefined
+
 -- generate a grid showing the fields for items passed in, possibly including a form for editing a selected one
-makeGrid :: (ToWidget App App b)
+makeGrid :: () -- ToWidget App App b)
          => (PersonId -> Route App)
          -> Route App
          -> Maybe PersonId
          -> [Entity Person]
          -> [GridField]
-         -> GHandler App App (Markup -> MForm App App (FormResult [Int], b))
-makeGrid = undefined
-{-
-makeGrid indR groupR sel items fields = 
-    let getWidget f w = fromJust $ lookup (label f) w -- what do if can't find?
-        disp i f      = (if needShow f then show else id) $ extract f $ entityVal i
-        dispRow i     = [whamlet|
+         -> GHandler App App (Markup -> MForm App App (FormResult [Int], GWidget App App ()))
+makeGrid indR groupR sel items fields = dMForm <$> getDefaults sel items fields
+    where dMForm mDefaults extra = do
+            (rs, ws) <- getDefaultedWidgets mDefaults fields
+            let getWidget f = fromJust $ lookup (label f) ws -- what do if can't find?
+                disp i f    = (if needShow f then show else id) $ extract f $ entityVal i
+                dispRow i   = [whamlet|
 $forall f <- fields
     <td>
         #{disp i f}
 <td>
     <a href=@{indR $ entityKey i}> edit  
 |]
-    in [whamlet|
+                widget = [whamlet|
 <table>
     <thead>
         <tr>
@@ -124,6 +131,11 @@ $forall f <- fields
     <tbody>
         $forall i <- items
             <tr>        
+                ^{dispRow i} 
+|]
+            return (rs, widget)
+
+{-
                 $maybe (key, w, x, e) <- sel
                     $if key == entityKey i
                             ^{x}
@@ -144,14 +156,13 @@ $forall f <- fields
 |]
 -}
 
-{-
 personAgeMForm :: (PersistStore (YesodPersistBackend master) (GHandler sub master), YesodPersist master, RenderMessage master FormMessage) 
      => Key (YesodPersistBackend master) (PersonGeneric backend) -- PersonId
      -> GHandler sub master (Html -> MForm sub master (FormResult Int, GWidget sub master ()))
 personAgeMForm pid = dMForm <$> (personAge <$>) <$> (runDB $ get pid)
     where dMForm mage extra = do
             (ageRes, ageView) <- mreq intField "unused" mage
-            let widget = do [whamlet|
+            let widget = [whamlet|
   $#adapted from renderDivs
   #{extra}
   <div :fvRequired ageView:.required :not $ fvRequired ageView:.optional>
@@ -163,4 +174,3 @@ personAgeMForm pid = dMForm <$> (personAge <$>) <$> (runDB $ get pid)
                 <div .errors style="color:red">#{err}
 |]
             return (ageRes, widget)
--}
