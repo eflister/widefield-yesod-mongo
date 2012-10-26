@@ -31,6 +31,7 @@ library
                      Handler.Home
                      Handler.Grid
                      Handler.People
+                     GridField
 
     if flag(dev) || flag(library-only)
         cpp-options:   -DDEVELOPMENT
