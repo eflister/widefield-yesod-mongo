@@ -46,7 +46,7 @@ groupGet :: ( RenderMessage m FormMessage
          -> GHandler s m RepHtml
 groupGet f = do
     (grid, _, _, _) <- f Nothing
-    defaultLayout . fst =<< generateFormPost =<< grid
+    defaultLayout . fst =<< generateFormPost =<< grid -- unkosher use of generateFormPost?  how include a 'setTitle'?
 
 formGet, formPost
          :: ( PersistEntity p
@@ -94,7 +94,9 @@ gridForm :: ( Yesod m
          -> GHandler s m RepHtml
 gridForm post gridder pid = do
     (grid, indR, groupR, fields) <- gridder $ Just pid
-    let done w e = defaultLayout [whamlet|
+    let done w e = defaultLayout $ do
+        setTitle "editing item"
+        [whamlet|
 <form method=post action=@{indR pid} enctype=#{e}>
     ^{w}
 |]   
@@ -155,7 +157,9 @@ $forall f <- fields
 <td>
     <a href=@{indR $ entityKey i}> edit  
 |]
+                style  = [lucius| .errors { color:red } |]
                 widget = [whamlet|
+^{style}
 ^{extra}
 <table>
     <thead>
@@ -179,7 +183,7 @@ $forall f <- fields
                                                         <div .tooltip>#{tt}
                                                     ^{fvInput view}
                                                     $maybe err <- fvErrors view
-                                                        <div .errors style="color:red">#{err}
+                                                        <div .errors >#{err}
                                     $nothing
                                         #{disp i f}
                             <td>
