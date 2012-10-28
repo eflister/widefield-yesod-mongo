@@ -32,25 +32,22 @@ i don't know how to package those up in a way that won't expose their heterogene
 possibly have user pass in something that will know how to use them and hide their values from us?
 -}
 
-data Grid s m p c =
--- data Grid s m p c t tv =
-    Grid { title    :: Text
+data Grid s m p c -- t tv 
+  = Grid { title    :: Text
          , routes   :: Routes m p
-         , getField :: c -> GridField s m p c
---       , getField :: c -> GridField s m p c t tv
+         , getField :: c -> GridField s m p c -- t tv
          }
 
-data GridField s m p c = forall t. 
--- data GridField s m p c t tv =
+data GridField s m p c -- t tv
+  = forall t.
   GridField { heading  :: c -> String
             , extract  :: p -> t
             , display  :: t -> String
-            , editable :: Maybe (Editable s m t p)
---          , editable :: Maybe (Editable s m t p tv)
+            , editable :: Maybe (Editable s m t p {- tv -} )
             }
 
-data Editable s m t p = forall tv.
--- data Editable s m t p tv =
+data Editable s m t p -- tv 
+  = forall tv.
   Editable { vField   :: Field s m tv
            , pField   :: EntityField p t
            , v2p      :: tv -> Either Text t
@@ -159,7 +156,7 @@ getDefaultedViews :: ( RenderMessage m FormMessage
                                )
 getDefaultedViews sel items fields = do
     let this  = entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
-        -- TODO: this spot won't work when we hide the types t and tv, but written as is, we can only have fields of one type
+
         -- defView works when only giving out the snd result (FieldView) of mreq, because it hides t and tv.  
         -- but we need the fst result (FormResult a) to process results -- but that exposes tv!
         defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$> snd <$> mreq v "unused" (p2v . extract <$> this) -- TODO: handle optional fields
@@ -167,7 +164,10 @@ getDefaultedViews sel items fields = do
         defView _ = return Nothing
     vs <- mapM (\(c, f) -> (c,) <$> defView f) fields
     return (undefined, vs)
-{-
+
+{-  -- this spot won't work when we hide the types t and tv, but if we expose them, we can only have fields of one type because 
+    -- the FormResults are together in a list
+
     (cs, mrsvs) <- unzip <$> mapM (\(c, f) -> (c,) <$> defView f) fields
     let (rs, vs) = unzip $ zipWith (\c m -> maybe (Nothing, (c, Nothing)) (\(a, b) -> (Just a, (c, Just b))) m) cs mrsvs -- ugly!  must be better way...
     return (sequenceA $ catMaybes rs, vs)
