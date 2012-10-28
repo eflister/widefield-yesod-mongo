@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification, TupleSections #-}
 
 module CRUDGrid
     ( Grid      (..)
@@ -8,7 +8,6 @@ module CRUDGrid
     , groupGet
     , formGet
     , formPost
-    , itemGrid
     ) where
 
 import Import
@@ -26,7 +25,8 @@ data Routes m p =
            }
 
 data Grid s m p c =
-    Grid { routes   :: Routes m p
+    Grid { title    :: Text
+         , routes   :: Routes m p
          , getField :: c -> GridField s m p c
          }
 
@@ -45,128 +45,171 @@ data Editable s m t p = forall tv.
            , required :: Bool
            }
 
+{-
 type Gridder s m p t =
        Maybe (ID m p)
-    -> GHandler s m (Html -> MForm s m (t, GWidget s m ()))
-
-groupGet :: ( Yesod m
-            , RenderMessage m FormMessage
-            )
-         => Gridder s m p (FormResult r)
-         -> GHandler s m RepHtml
-groupGet gridder = defaultLayout . fst =<< generateFormPost =<< gridder Nothing -- unkosher use of generateFormPost?  how include a 'setTitle'?
-
-{-
-formGet, formPost
-         :: ( PersistEntity p
-            , RenderMessage m FormMessage
-            , Yesod m
-            , YesodPersist m
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , PersistField t
-            )
-         => Gridder s m t p
-         -> ID m p
-         -> GHandler s m RepHtml
+    -> GHandler s m ( Html -> MForm s m (FormResult t, GWidget s m ())
+                    , Routes m p
+                    )
 -}
-formGet, formPost
-         :: ( Yesod m
+
+groupGet :: ( Bounded c
+            , Enum c
+            , Eq c
+            , Show c
+            , PersistEntity p
+            , PersistQuery (YesodPersistBackend m) (GHandler s m)
+            , YesodPersist m
+            , Yesod m
             , RenderMessage m FormMessage
+            , PersistEntityBackend p ~ YesodPersistBackend m
             )
-         => Gridder s m p (FormResult r)
+         => Grid s m p c
+         -> GHandler s m RepHtml
+groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g Nothing
+
+formGet, formPost
+         :: ( Bounded c
+            , Enum c
+            , Eq c
+            , Show c
+            , PersistEntity p
+            , PersistQuery (YesodPersistBackend m) (GHandler s m)
+            , YesodPersist m
+            , Yesod m
+            , RenderMessage m FormMessage
+            , PersistEntityBackend p ~ YesodPersistBackend m
+            )
+         => Grid s m p c
          -> ID m p
          -> GHandler s m RepHtml
 formGet  = gridForm False
 formPost = gridForm True
 
-{-
 -- run a form, extract results, and update the database
-gridForm :: ( Yesod m
-            , YesodPersist m
+gridForm :: ( Bounded c
+            , Enum c
+            , Eq c
+            , Show c
             , PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , PersistField t
+            , YesodPersist m
+            , Yesod m
             , RenderMessage m FormMessage
+            , PersistEntityBackend p ~ YesodPersistBackend m
             )
          => Bool
-         -> Gridder s m t p
+         -> Grid s m p c
          -> ID m p
          -> GHandler s m RepHtml
--}
-gridForm :: ( Yesod m
-            , RenderMessage m FormMessage
-            )
-         => Bool
-         -> Gridder s m p (FormResult r)
-         -> ID m p
-         -> GHandler s m RepHtml
-gridForm run gridder pid = do
-    f <- gridder $ Just pid
+gridForm run g pid = do
+    (form, routes) <- makeGrid g $ Just pid
     let done w e = defaultLayout $ do
         setTitle "editing item"
         [whamlet|
-<form method=post  enctype=#{e}>
+<form method=post action=@{indR routes $ pid} enctype=#{e}>
     ^{w}
-|]  {-action=@{indR (routes grid) $ pid}-}
+|]  
     if run
         then do
-            ((r, w), e) <- runFormPost f
+            ((r, w), e) <- runFormPost form
             case r of
                 FormSuccess rs -> do
                     -- runDB $ update pid . getZipList $ ZipList ((=.) <$> dbField <$> snd <$> getEditable fields) <*> ZipList rs
                     setMessage "success"
-                    -- redirect . groupR $ routes grid
-                    defaultLayout $ [whamlet|hi|]
+                    redirect $ groupR routes
                 _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
         else do
-            (w, e) <- generateFormPost f
+            (w, e) <- generateFormPost form
             done w e
 
--- lookup all items of a given type in the database
-itemGrid :: ( PersistEntity p
+getDefaultedViews :: ( RenderMessage m FormMessage
+                     , Show c
+                     )
+                  => Maybe (Key (PersistEntityBackend p) p)
+                  -> [Entity p]
+                  -> [(c, GridField s m p c)]
+                  -> MForm s m ( t -- FormResult t
+                               , [(c, FieldView s m)]
+                               )
+getDefaultedViews sel items fields = do
+    let this  = entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
+        defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$> snd <$> mreq v "unused" ((p2v . extract) <$> this) -- haven't handled optional fields yet
+        defView _ = return Nothing
+    vs <- catMaybes <$> mapM (\(c, f) -> ((c,) <$>) <$> defView f) fields
+    liftIO . print $ fst <$> vs
+    return (undefined, vs)
+--sequenceA, unzip, PersistEntity p
+
+-- generate a grid showing all items of a given type, possibly including a form for editing a selected one
+makeGrid :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
             , YesodPersist m
             , Bounded c
             , Enum c
+            , Eq c
+            , Show c
             , PersistEntityBackend p ~ YesodPersistBackend m
+            , RenderMessage m FormMessage
             ) 
          => Grid s m p c
-         -> Gridder s m p t
-itemGrid g sel = do
+         -> Maybe (ID m p)
+         -> GHandler s m ( Html -> MForm s m (t, GWidget s m ())
+                         , Routes m p
+                         )
+makeGrid g sel = do
     items <- runDB $ selectList [] []
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
-    makeGrid g items sel
-
--- generate a grid showing the fields for items passed in, possibly including a form for editing a selected one
-makeGrid :: ( Bounded c
-            , Enum c
-            , PersistEntityBackend p ~ YesodPersistBackend m
-            ) 
-         => Grid s m p c
-         -> [Entity p]
-         -> Gridder s m p t
-makeGrid g items sel = return $ \extra -> do
-            let cols = [minBound..maxBound]
-                fields = getField g <$> cols
-                disp (GridField _ extract display _) = display . extract . entityVal
-                dispRow i = [whamlet|
-$forall f <- fields
+    return . (, routes g) $ \extra -> do
+        let fields = (\x -> (x, getField g $ x)) <$> [minBound..maxBound]
+            disp (GridField _ extract display _) = display . extract . entityVal
+            dispRow i = [whamlet|
+$forall (_, f) <- fields
     <td>
         #{disp f i}
 <td>
     <a href=@{(indR $ routes g) $ entityKey i}> edit  
 |]
-                widget = [whamlet|
+        (rs, vs) <- getDefaultedViews sel items fields
+        let getView c = fromJust $ lookup c vs -- won't be called if can't find...
+            isEditable (GridField _ _ _ (Just _)) = True
+            isEditable (GridField _ _ _ Nothing ) = False
+            style  = [lucius| .errors { color:red } |]
+            widget = [whamlet|
+^{style}
 ^{extra}
 <table>
     <thead>
         <tr>
-            $forall c <- cols
-                <th> #{(heading $ (getField g) c) c}
+            $forall (c, _) <- fields
+                <th> #{(heading $ getField g $ c) c}
             <th> actions
     <tbody>
         $forall i <- items
-            <tr>                       
-                    ^{dispRow i}                                
+            <tr>        
+                $maybe key <- sel
+                    $if key == entityKey i
+                            $forall (c, f) <- fields
+                                <td>
+                                    $if isEditable f
+                                        $with view <- getView c
+                                            $#adapted from renderDivs
+                                            <div :fvRequired view:.required :not $ fvRequired view:.optional>
+                                                <label for=#{fvId view}>
+                                                    $maybe tt <- fvTooltip view
+                                                        <div .tooltip>#{tt}
+                                                    ^{fvInput view}
+                                                    $maybe err <- fvErrors view
+                                                        <div .errors >#{err}
+                                    $else
+                                        #{disp f i}
+                            <td>
+                                <input type="submit" value="save">
+                                <a href=@{groupR $ routes g}> 
+                                    <input type="button" value="cancel">
+                    $else
+                        ^{dispRow i}
+                $nothing
+                    ^{dispRow i}  
 |]
-            return (undefined, widget)
+        return (rs, widget)
