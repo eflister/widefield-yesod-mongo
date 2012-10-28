@@ -45,14 +45,6 @@ data Editable s m t p = forall tv.
            , required :: Bool
            }
 
-{-
-type Gridder s m p t =
-       Maybe (ID m p)
-    -> GHandler s m ( Html -> MForm s m (FormResult t, GWidget s m ())
-                    , Routes m p
-                    )
--}
-
 groupGet :: ( Bounded c
             , Enum c
             , Eq c
@@ -130,16 +122,15 @@ getDefaultedViews :: ( RenderMessage m FormMessage
                   -> [Entity p]
                   -> [(c, GridField s m p c)]
                   -> MForm s m ( t -- FormResult t
-                               , [(c, FieldView s m)]
+                               , [(c, Maybe (FieldView s m))]
                                )
 getDefaultedViews sel items fields = do
     let this  = entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
-        defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$> snd <$> mreq v "unused" ((p2v . extract) <$> this) -- haven't handled optional fields yet
+        defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$> snd <$> mreq v "unused" ((p2v . extract) <$> this) -- TODO: handle optional fields
         defView _ = return Nothing
-    vs <- catMaybes <$> mapM (\(c, f) -> ((c,) <$>) <$> defView f) fields
-    liftIO . print $ fst <$> vs
+    vs <- mapM (\(c, f) -> (c,) <$> defView f) fields
     return (undefined, vs)
---sequenceA, unzip, PersistEntity p
+    --TODO: get FormResults working! sequenceA, unzip, PersistEntity p
 
 -- generate a grid showing all items of a given type, possibly including a form for editing a selected one
 makeGrid :: ( PersistEntity p
@@ -168,12 +159,11 @@ $forall (_, f) <- fields
     <td>
         #{disp f i}
 <td>
-    <a href=@{(indR $ routes g) $ entityKey i}> edit  
+    $# -- TODO: if no fields editable, don't show this (or render action column, or allow item routes)
+    <a href=@{(indR $ routes g) $ entityKey i}> edit 
 |]
         (rs, vs) <- getDefaultedViews sel items fields
-        let getView c = fromJust $ lookup c vs -- won't be called if can't find...
-            isEditable (GridField _ _ _ (Just _)) = True
-            isEditable (GridField _ _ _ Nothing ) = False
+        let getView c = fromJust $ lookup c vs
             style  = [lucius| .errors { color:red } |]
             widget = [whamlet|
 ^{style}
@@ -191,17 +181,16 @@ $forall (_, f) <- fields
                     $if key == entityKey i
                             $forall (c, f) <- fields
                                 <td>
-                                    $if isEditable f
-                                        $with view <- getView c
-                                            $#adapted from renderDivs
-                                            <div :fvRequired view:.required :not $ fvRequired view:.optional>
-                                                <label for=#{fvId view}>
-                                                    $maybe tt <- fvTooltip view
-                                                        <div .tooltip>#{tt}
-                                                    ^{fvInput view}
-                                                    $maybe err <- fvErrors view
-                                                        <div .errors >#{err}
-                                    $else
+                                    $maybe view <- getView c
+                                        $#adapted from renderDivs
+                                        <div :fvRequired view:.required :not $ fvRequired view:.optional>
+                                            <label for=#{fvId view}>
+                                                $maybe tt <- fvTooltip view
+                                                    <div .tooltip>#{tt}
+                                                ^{fvInput view}
+                                                $maybe err <- fvErrors view
+                                                    <div .errors >#{err}
+                                    $nothing
                                         #{disp f i}
                             <td>
                                 <input type="submit" value="save">
