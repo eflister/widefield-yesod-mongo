@@ -9,19 +9,19 @@ Email
     UniqueEmail email
 
 Person
-    name String
+    name Text
     age Int
     deriving Show
 
 SubjectRec -- interferes w/stuff in Foundation
-    name String
+    name Text
     amount Double
     box BoxId
-    dir String
+    dir Text
     UniqueSubjetName name
 
 Box
-    name String
+    name Text
     UniqueBoxName name
 
  -- By default this file is used in Model.hs (which is imported by Foundation.hs)

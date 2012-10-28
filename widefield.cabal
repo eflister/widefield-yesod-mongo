@@ -31,7 +31,7 @@ library
                      Handler.Home
                      Handler.Grid
                      Handler.People
-                     GridField
+                     CRUDGrid
 
     if flag(dev) || flag(library-only)
         cpp-options:   -DDEVELOPMENT

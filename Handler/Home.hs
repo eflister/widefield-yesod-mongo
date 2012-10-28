@@ -61,14 +61,15 @@ content (handlerName :: Text)
                 void $ rawSystem "matlab" ["-nodesktop", "-nosplash", "-wait", "-logfile", log, "-r", "x=2;x+2,quit"]
                 lg <- readFile log
                 return . splitOn "\n" $ T.unpack lg
+{-
             people <- lift . runDB $ do
                 orM ( do liftIO $ putStrLn "checking"
                          (entityVal <$>) <$> (selectList [PersonName ==. "Stacy"] [])
                    )( do liftIO $ putStrLn "generated"
                          maybeToList <$> (get =<< (insert $ Person "Stacy" 26))
                     )
-
             [whamlet| hi #{personName =<< people}<p> |]
+-}
             $(widgetFile "homepage")
 
 sampleForm :: Form (FileInfo, Text)
