@@ -11,12 +11,13 @@ module CRUDGrid
     ) where
 
 import Import
+import Control.Arrow
+import Control.Monad
 import Control.Applicative
-import Data.Maybe
-import Data.Traversable (sequenceA)
-import Prelude (head)
 import Data.Either
+import Data.Maybe
 import qualified Data.Text.IO as T
+import Prelude (head)
 
 type ID m p = Key (YesodPersistBackend m) p
 
@@ -25,32 +26,24 @@ data Routes m p =
            , groupR :: Route m
            }
 
-{-
-we need to hide the types t and tv, or else we can't work with a grid that has fields of more than one type.
-the following definitions work up to the point of getting a bunch of (FormResult a) from mreq.
-i don't know how to package those up in a way that won't expose their heterogeneous a's.
-possibly have user pass in something that will know how to use them and hide their values from us?
--}
-
-data Grid s m p c -- t tv 
+data Grid s m p c r 
   = Grid { title    :: Text
          , routes   :: Routes m p
-         , getField :: c -> GridField s m p c -- t tv
+         , getField :: c -> GridField s m p c
          }
 
-data GridField s m p c -- t tv
-  = forall t.
+data GridField s m p c
+  = forall t. (PersistField t) =>
   GridField { heading  :: c -> String
             , extract  :: p -> t
             , display  :: t -> String
-            , editable :: Maybe (Editable s m t p {- tv -} )
+            , editable :: Maybe (Editable s m t p)
             }
 
-data Editable s m t p -- tv 
+data Editable s m t p
   = forall tv.
   Editable { vField   :: Field s m tv
            , pField   :: EntityField p t
-           , v2p      :: tv -> Either Text t
            , p2v      :: t -> tv
            , required :: Bool
            }
@@ -66,9 +59,9 @@ groupGet :: ( Bounded c
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
             )
-         => Grid s m p c -- t tv
+         => Grid s m p c r
          -> GHandler s m RepHtml
-groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g Nothing
+groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g Nothing -- unkosher use of generateFormPost?
 
 formGet, formPost
          :: ( Bounded c
@@ -81,9 +74,8 @@ formGet, formPost
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
---          , PersistField t
             )
-         => Grid s m p c -- t tv
+         => Grid s m p c r
          -> ID m p
          -> GHandler s m RepHtml
 formGet  = gridForm False
@@ -100,10 +92,9 @@ gridForm :: ( Bounded c
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
---          , PersistField t
             )
          => Bool
-         -> Grid s m p c -- t tv
+         -> Grid s m p c r
          -> ID m p
          -> GHandler s m RepHtml
 gridForm run g pid = do
@@ -118,60 +109,31 @@ gridForm run g pid = do
         then do
             ((r, w), e) <- runFormPost form
             case r of
-                FormSuccess rs -> do
-                    -- TODO: this spot won't work when we hide the types t and tv, but written as is, we can only have fields of one type
-                    -- user should pass something in to the Grid that makeGrid will use to process the results/hide the types and pass that to us
-{-
-                    let getFns (GridField _ _ _ (Just (Editable _ pField v2p _ True))) = Just (pField, v2p)
-                        getFns _ = Nothing
-                        (pfs, converters) = unzip . catMaybes $ getFns . getField g <$> [minBound..maxBound]
-                        (bads, goods) = partitionEithers $ getZipList $ ZipList converters <*> ZipList rs
-                    if null bads
-                        then do
-                            runDB $ update pid . getZipList $ ZipList ((=.) <$> pfs) <*> ZipList goods
--}
-                            setMessage "success"
-                            redirect $ groupR routes
-{-
-                        else do
-                            liftIO $ mapM_ T.putStrLn bads
-                            setMessage "no data updated"
-                            undefined -- TODO show errors, reload form without undoing their edits?     
--}               
+                FormSuccess (Just p) -> do
+                    let convert (GridField _ extract _ (Just (Editable _ pField _ True))) = Just $ pField =. extract p
+                        convert _ = Nothing
+                    runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound]
+                    setMessage "success"
+                    redirect $ groupR routes       
                 _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
         else do
             (w, e) <- generateFormPost form
             done w e
 
 getDefaultedViews :: ( RenderMessage m FormMessage
-                     , Show c
                      )
-                  => Maybe (Key (PersistEntityBackend p) p)
-                  -> [Entity p]
-                  -> [( c 
-                      , GridField s m p c -- t tv
-                      )]
-                  -> MForm s m ( FormResult a -- [tv]
+                  => [(c, GridField s m p c)]
+                  -> Maybe p
+                  -> MForm s m ( FormResult (Maybe p)
                                , [(c, Maybe (FieldView s m))]
                                )
-getDefaultedViews sel items fields = do
-    let this  = entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
-
-        -- defView works when only giving out the snd result (FieldView) of mreq, because it hides t and tv.  
-        -- but we need the fst result (FormResult a) to process results -- but that exposes tv!
-        defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$> snd <$> mreq v "unused" (p2v . extract <$> this) -- TODO: handle optional fields
---      defView (GridField _ extract _ (Just (Editable v _ _ p2v True))) = Just <$>         mreq v "unused" (p2v . extract <$> this)
-        defView _ = return Nothing
-    vs <- mapM (\(c, f) -> (c,) <$> defView f) fields
-    return (undefined, vs)
-
-{-  -- this spot won't work when we hide the types t and tv, but if we expose them, we can only have fields of one type because 
-    -- the FormResults are together in a list
-
-    (cs, mrsvs) <- unzip <$> mapM (\(c, f) -> (c,) <$> defView f) fields
-    let (rs, vs) = unzip $ zipWith (\c m -> maybe (Nothing, (c, Nothing)) (\(a, b) -> (Just a, (c, Just b))) m) cs mrsvs -- ugly!  must be better way...
-    return (sequenceA $ catMaybes rs, vs)
--}
+getDefaultedViews fields this = do
+    let defView (mp, cs) (c, g) = case g of 
+            GridField _ extract _ (Just (Editable v _ p2v True)) -> do
+                 (r, v) <- mreq v "unused" $ p2v . extract <$> this -- TODO: handle optional fields
+                 return (mp {- <$> extract = (<*> r) -}, (c, Just v ) : cs)
+            _ -> return (mp                            , (c, Nothing) : cs)
+    foldM defView (pure this, []) fields
 
 -- generate a grid showing all items of a given type, possibly including a form for editing a selected one
 makeGrid :: ( PersistEntity p
@@ -180,13 +142,12 @@ makeGrid :: ( PersistEntity p
             , Bounded c
             , Enum c
             , Eq c
-            , Show c
             , PersistEntityBackend p ~ YesodPersistBackend m
             , RenderMessage m FormMessage
             ) 
-         => Grid s m p c -- t tv
+         => Grid s m p c r
          -> Maybe (ID m p)
-         -> GHandler s m ( Html -> MForm s m ( FormResult a -- [tv]
+         -> GHandler s m ( Html -> MForm s m ( FormResult (Maybe p)
                                              , GWidget s m ()
                                              )
                          , Routes m p
@@ -194,8 +155,11 @@ makeGrid :: ( PersistEntity p
 makeGrid g sel = do
     items <- runDB $ selectList [] []
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
+    let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
-        let fields = (\x -> (x, getField g $ x)) <$> [minBound..maxBound]
+        (rs, vs) <- getDefaultedViews fields $ entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> sel
+        let getView = fromJust . flip lookup vs
+            style = [lucius| .errors { color:red } |]
             disp (GridField _ extract display _) = display . extract . entityVal
             dispRow i = [whamlet|
 $forall (_, f) <- fields
@@ -205,17 +169,14 @@ $forall (_, f) <- fields
     $# -- TODO: if no fields editable, don't show this (or render action column, or allow item routes)
     <a href=@{(indR $ routes g) $ entityKey i}> edit 
 |]
-        (rs, vs) <- getDefaultedViews sel items fields
-        let getView c = fromJust $ lookup c vs
-            style  = [lucius| .errors { color:red } |]
             widget = [whamlet|
 ^{style}
 ^{extra}
 <table>
     <thead>
         <tr>
-            $forall (c, _) <- fields
-                <th> #{(heading $ getField g $ c) c}
+            $forall (c, f) <- fields
+                <th> #{heading f $ c}
             <th> actions
     <tbody>
         $forall i <- items
