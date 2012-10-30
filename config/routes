@@ -7,8 +7,9 @@
 /                 HomeR     GET POST
 /grid             GridR     GET
 
-/people           PeopleR   GET
-/people/#PersonId PersonR   GET POST
+/people           PeopleR    GET
+/people/#PersonId PersonR    GET POST DELETE
+/newPerson        NewPersonR GET POST
 
-/overview                                OverviewR GET
-/image/#Subject/#Analysis/#TrialRange    ImageR    GET
+/overview                             OverviewR GET
+/image/#Subject/#Analysis/#TrialRange ImageR    GET
