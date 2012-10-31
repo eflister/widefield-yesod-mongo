@@ -64,7 +64,7 @@ groupGet, formNewGet, formNewPost
             )
          => Grid s m p c
          -> GHandler s m RepHtml
-groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> (makeGrid g $ Right Nothing) -- unkosher use of generateFormPost? 
+groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g (Right Nothing) -- unkosher use of generateFormPost? 
 formNewGet         = formNewPostGen False
 formNewPost        = formNewPostGen True
 formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
@@ -112,7 +112,7 @@ gridForm :: ( Bounded c
          -> GHandler s m RepHtml
 gridForm run g sel = do
     (form, routes) <- makeGrid g $ (id +++ Just) sel
-    let postR    = ((const $ newR routes) ||| indR routes) sel 
+    let postR    = (const (newR routes) ||| indR routes) sel 
         done w e = defaultLayout $ do
             setTitle "editing item"
             [whamlet|
@@ -143,7 +143,7 @@ getDefaultedViews :: ( RenderMessage m FormMessage
                                , [(c, Maybe (FieldView s m))]
                                )
 getDefaultedViews fields this = do
-    let defView (mp, cs) (c, g) = (id *** (\x -> (c, x) : cs)) <$> 
+    let defView (mp, cs) (c, g) = second (\x -> (c, x) : cs) <$> 
             case g of 
                 GridField _ extract _ (Just (Editable f _ True updater)) -> do
                     (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
@@ -191,7 +191,7 @@ makeGrid g sel = do
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
         (rs, vs) <- getDefaultedViews fields . flip (either $ Just . id) sel $ (\x -> entityVal . head <$> (\y -> filter ((y ==) . entityKey) items) <$> x) -- TODO: redirect if not found
-        let getView = fromJust . (flip lookup vs)
+        let getView = fromJust . (`lookup` vs)
             style = [lucius| .errors { color:red } |]
             mini (GridField _ extract display _) = display . extract
             disp x = mini x . entityVal
