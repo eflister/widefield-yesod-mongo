@@ -31,7 +31,7 @@ data Routes m p =
 data Grid s m p c =
     Grid { title       :: Text
          , allowDelete :: Bool
-         , defaultNew  :: Maybe (Maybe p)
+         , defaultNew  :: Maybe p
          , routes      :: Routes m p
          , getField    :: c -> GridField s m p c
          }
@@ -61,13 +61,13 @@ groupGet, formNewGet, formNewPost
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
-            , Show p
             )
          => Grid s m p c
          -> GHandler s m RepHtml
 groupGet    g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> (makeGrid g $ Right Nothing) -- unkosher use of generateFormPost? 
-formNewGet  g = gridForm False g . Left . fromJust $ defaultNew g
-formNewPost g = gridForm True  g $ Left Nothing
+formNewGet         = formNewPostGen False
+formNewPost        = formNewPostGen True
+formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
 
 formGet, formPost, formDelete
          :: ( Bounded c
@@ -79,7 +79,6 @@ formGet, formPost, formDelete
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
-            , Show p
             )
          => Grid s m p c
          -> ID m p
@@ -92,7 +91,7 @@ formDelete g pid = do
     case p of
         Nothing -> setMessage "no object for that id"
         Just _  -> do
-            runDB $ delete pid -- how tell if this succeeded?  what makes sure this was on the right table?
+            runDB $ delete pid -- how tell if delete succeeded?  what makes sure this was on the right table?
             setMessage "success"
     redirect . groupR $ routes g
 
@@ -106,11 +105,10 @@ gridForm :: ( Bounded c
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
-            , Show p
             )
          => Bool
          -> Grid s m p c
-         -> Either (Maybe p) (ID m p)
+         -> Either p (ID m p)
          -> GHandler s m RepHtml
 gridForm run g sel = do
     (form, routes) <- makeGrid g $ (id +++ Just) sel
@@ -124,13 +122,13 @@ gridForm run g sel = do
     if run then do
                 ((r, w), e) <- runFormPost form
                 case r of FormSuccess (Just p) -> do
-                            flip (either (const . void . runDB $ insert p)) sel $ \pid -> do 
+                            flip (either (const . void . runDB $ insert p)) sel $ \pid -> do -- how tell if insert succeeded?
                                 let convert (GridField _ extract _ (Just (Editable _ pField True _))) = Just $ pField =. extract p
                                     convert _ = Nothing
-                                runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if this succeeded?                                  
+                                runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if update succeeded?                                  
                             setMessage "success"
                             redirect $ groupR routes       
-                          _ -> (liftIO $ print r) >> done w e -- use contents of failure somehow?  does fvErrors already get it all?
+                          _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
            else do
                 (w, e) <- generateFormPost form
                 done w e
@@ -150,6 +148,23 @@ getDefaultedViews fields this = do
                           _ -> return (                  mp, Nothing)
     foldM defView (pure this, []) fields
 
+{- makes a handler instead of a widget
+delForm i = do
+    (w, e) <- generateFormPost . renderDivs $ areq textField "Model" Nothing
+
+    [whamlet|
+<form method=post action=@{i} enctype=#{e}>
+    ^{w}
+<input type="submit" value="delete">
+|]
+-}
+
+--hack to use GET
+delForm i = [whamlet|
+<a href=@{i}>
+    <input type="button" value="delete">
+|]
+
 -- generate a grid showing all items of a given type, possibly including a form for editing a selected one
 makeGrid :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
@@ -161,7 +176,7 @@ makeGrid :: ( PersistEntity p
             , RenderMessage m FormMessage
             ) 
          => Grid s m p c
-         -> Either (Maybe p) (Maybe (ID m p)) -- left: creating new with possible default, right: possibly editing
+         -> Either p (Maybe (ID m p)) -- left: creating new with default, right: possibly editing
          -> GHandler s m ( Html -> MForm s m ( FormResult (Maybe p)
                                              , GWidget s m ()
                                              )
@@ -172,22 +187,12 @@ makeGrid g sel = do
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
-        (rs, vs) <- getDefaultedViews fields . (flip (either id) sel) $ (\x -> entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> x)
+        (rs, vs) <- getDefaultedViews fields . (flip (either $ Just . id) sel) $ (\x -> entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> x)
         let getView = fromJust . (flip lookup vs)
             style = [lucius| .errors { color:red } |]
             mini (GridField _ extract display _) = display . extract
             disp x = mini x . entityVal
             nediting = (const False ||| isNothing) sel
-{-
-            delForm i = do
-                (w, e) <- generateFormPost [whamlet|
-<input type="submit" value="delete">
-|]
-                [whamlet|
-<form method=post action=@{(deleteR $ routes g) $ entityKey i} enctype=#{e}>
-    ^{w}
-|]
--}
             dispRow i = [whamlet|
 $forall (_, f) <- fields
     <td>
@@ -199,7 +204,7 @@ $if nediting
     $if allowDelete g
         <td>
             $# how specify method shouldn't be GET?
-            $# ^{delForm i}                
+            ^{delForm $ (deleteR $ routes g) $ entityKey i}                
 |]
             form t = [whamlet|
 $forall (c, f) <- fields
@@ -217,8 +222,7 @@ $forall (c, f) <- fields
             $maybe i <- t
                 #{disp f i}
             $nothing
-                $maybe i <- (id ||| undefined) sel
-                    mini (getField g $ c) i
+                #{mini (getField g $ c) $ (id ||| undefined) sel}
 <td>
     <input type="submit" value="save">
 <td>
