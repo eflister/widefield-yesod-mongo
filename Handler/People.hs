@@ -9,17 +9,27 @@ getPeopleR     = groupGet    peopleGrid
 getNewPersonR  = formNewGet  peopleGrid
 postNewPersonR = formNewPost peopleGrid
 
-getPersonR, postPersonR, deletePersonR :: PersonId -> Handler RepHtml
-getPersonR    = formGet    peopleGrid
-postPersonR   = formPost   peopleGrid
-deletePersonR = formDelete peopleGrid
+getPersonR, postPersonR, postDeletePersonR :: PersonId -> Handler RepHtml
+getPersonR        = formGet    peopleGrid
+postPersonR       = formPost   peopleGrid
+postDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
 
 data PersonColumn = Name | Age
    deriving (Eq, Show, Bounded, Enum)
 
-peopleGrid = Grid "People" True (Just . Just $ Person "<type name>" 0) (Routes PersonR PeopleR newPersonR deletePersonR) $ \c -> case c of 
-    Name -> GridField show personName T.unpack . Just $ Editable textField PersonName True (\x p -> (\y -> y{personName = x}) <$> p)
+peopleGrid :: Grid s App Person PersonColumn
+peopleGrid = Grid "People" True (Just . Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) $ \c -> case c of 
 --  Name -> GridField show personName T.unpack Nothing
+    Name -> GridField show personName T.unpack . Just $ Editable textField PersonName True (\x p -> (\y -> y{personName = x}) <$> p)
     Age  -> GridField show personAge  show     . Just $ Editable ageField  PersonAge  True (\x p -> (\y -> y{personAge  = x}) <$> p)
 
-ageField = checkBool (>= 0) "ages >= 0" intField
+ageField :: Integral a => Field s App a
+ageField = checkBool (>= 0) ageMsg intField
+
+nameField :: Field s App Text
+nameField = checkBool (not . T.isInfixOf namePrompt) nameMsg textField
+
+namePrompt, ageMsg, nameMsg :: Text
+namePrompt = "type name" -- this doesn't work if contains <>
+ageMsg     = "age must be >= 0"
+nameMsg    = "name must not contain \"" `T.append` namePrompt `T.append` "\""

@@ -61,12 +61,13 @@ groupGet, formNewGet, formNewPost
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
+            , Show p
             )
          => Grid s m p c
          -> GHandler s m RepHtml
-groupGet    g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g $ Right Nothing -- unkosher use of generateFormPost? 
-formNewGet  g = gridForm False g Left . fromJust $ defaultNew g
-formNewPost g = gridForm True  g undefined
+groupGet    g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> (makeGrid g $ Right Nothing) -- unkosher use of generateFormPost? 
+formNewGet  g = gridForm False g . Left . fromJust $ defaultNew g
+formNewPost g = gridForm True  g $ Left Nothing
 
 formGet, formPost, formDelete
          :: ( Bounded c
@@ -78,14 +79,17 @@ formGet, formPost, formDelete
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
+            , Show p
             )
          => Grid s m p c
          -> ID m p
          -> GHandler s m RepHtml
-formGet    g pid = gridForm g False $ Right pid
-formPost   g pid = gridForm g True  $ Right pid
+formGet          = formGen False
+formPost         = formGen True
+formGen  r g pid = gridForm r g $ Right pid
 formDelete g pid = do
-    case get pid of
+    p <- runDB $ get pid
+    case p of
         Nothing -> setMessage "no object for that id"
         Just _  -> do
             runDB $ delete pid -- how tell if this succeeded?  what makes sure this was on the right table?
@@ -102,29 +106,31 @@ gridForm :: ( Bounded c
             , Yesod m
             , RenderMessage m FormMessage
             , PersistEntityBackend p ~ YesodPersistBackend m
+            , Show p
             )
          => Bool
          -> Grid s m p c
          -> Either (Maybe p) (ID m p)
          -> GHandler s m RepHtml
 gridForm run g sel = do
-    (form, routes) <- makeGrid g $ either id Just sel
-    let done w e = defaultLayout $ do
-        setTitle "editing item"
-        [whamlet|
-<form method=post action=@{indR routes $ pid} enctype=#{e}>
+    (form, routes) <- makeGrid g $ (id +++ Just) sel
+    let postR    = ((const $ newR routes) ||| indR routes) sel 
+        done w e = defaultLayout $ do
+            setTitle "editing item"
+            [whamlet|
+<form method=post action=@{postR} enctype=#{e}>
     ^{w}
 |]  
     if run then do
                 ((r, w), e) <- runFormPost form
                 case r of FormSuccess (Just p) -> do
-                            (|||) do 
+                            flip (either (const . void . runDB $ insert p)) sel $ \pid -> do 
                                 let convert (GridField _ extract _ (Just (Editable _ pField True _))) = Just $ pField =. extract p
                                     convert _ = Nothing
-                                runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if this succeeded?
+                                runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if this succeeded?                                  
                             setMessage "success"
                             redirect $ groupR routes       
-                          _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
+                          _ -> (liftIO $ print r) >> done w e -- use contents of failure somehow?  does fvErrors already get it all?
            else do
                 (w, e) <- generateFormPost form
                 done w e
@@ -137,11 +143,11 @@ getDefaultedViews :: ( RenderMessage m FormMessage
                                , [(c, Maybe (FieldView s m))]
                                )
 getDefaultedViews fields this = do
-    let defView (mp, cs) (c, g) = case g of 
-            GridField _ extract _ (Just (Editable f _ True updater)) -> do
-                 (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
-                 return (updater <$> r <*> mp, (c, Just v ) : cs)
-            _ -> return (                  mp, (c, Nothing) : cs)
+    let defView (mp, cs) (c, g) = (id *** (\x -> (c, x) : cs)) <$> 
+                case g of GridField _ extract _ (Just (Editable f _ True updater)) -> do
+                               (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
+                               return (updater <$> r <*> mp, Just v )
+                          _ -> return (                  mp, Nothing)
     foldM defView (pure this, []) fields
 
 -- generate a grid showing all items of a given type, possibly including a form for editing a selected one
@@ -166,12 +172,22 @@ makeGrid g sel = do
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
-        (rs, vs) <- getDefaultedViews fields . flip (either id) . sel $ (\x -> entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> x)
-        let getView = fromJust . flip lookup vs
+        (rs, vs) <- getDefaultedViews fields . (flip (either id) sel) $ (\x -> entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> x)
+        let getView = fromJust . (flip lookup vs)
             style = [lucius| .errors { color:red } |]
             mini (GridField _ extract display _) = display . extract
             disp x = mini x . entityVal
-            nediting = either (const False) isJust sel
+            nediting = (const False ||| isNothing) sel
+{-
+            delForm i = do
+                (w, e) <- generateFormPost [whamlet|
+<input type="submit" value="delete">
+|]
+                [whamlet|
+<form method=post action=@{(deleteR $ routes g) $ entityKey i} enctype=#{e}>
+    ^{w}
+|]
+-}
             dispRow i = [whamlet|
 $forall (_, f) <- fields
     <td>
@@ -180,10 +196,10 @@ $# -- TODO: if no fields editable, don't show this (or render action column, or 
 $if nediting
     <td>
         <a href=@{(indR $ routes g) $ entityKey i}> edit 
-    $if allowDelete
+    $if allowDelete g
         <td>
-            <a href=@{(deleteR $ routes g) $ entityKey i}> 
-                <input type="button" value="delete">
+            $# how specify method shouldn't be GET?
+            $# ^{delForm i}                
 |]
             form t = [whamlet|
 $forall (c, f) <- fields
@@ -221,17 +237,17 @@ $forall (c, f) <- fields
     <tbody>
         $forall i <- items
             <tr>        
-                $maybe key <- (Nothing ||| id) sel
+                $maybe key <- (const Nothing ||| id) sel
                     $if key == entityKey i
                         ^{form $ Just i}
                     $else
                         ^{dispRow i}
                 $nothing
                     ^{dispRow i}  
-        $if isLeft sel
+        $if (const True ||| const False) sel
             <tr>
                 ^{form Nothing}
-$if nediting && isJust $ defaultNew g
+$if (&&) nediting $ isJust $ defaultNew g
     <a href=@{newR $ routes g}> 
         <input type="button" value="new">
 |]
