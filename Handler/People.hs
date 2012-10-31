@@ -10,9 +10,9 @@ getNewPersonR  = formNewGet  peopleGrid
 postNewPersonR = formNewPost peopleGrid
 
 getPersonR, postPersonR, getDeletePersonR :: PersonId -> Handler RepHtml
-getPersonR        = formGet    peopleGrid
-postPersonR       = formPost   peopleGrid
-getDeletePersonR  = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
+getPersonR       = formGet    peopleGrid
+postPersonR      = formPost   peopleGrid
+getDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
 
 data PersonColumn = Name | Age
    deriving (Eq, Show, Bounded, Enum)
@@ -30,6 +30,6 @@ nameField :: Field s App Text
 nameField = checkBool (not . T.isInfixOf namePrompt) nameMsg textField
 
 namePrompt, ageMsg, nameMsg :: Text
-namePrompt = "<type name>" -- this doesn't work if contains <>
+namePrompt = "<type name>"
 ageMsg     = "age must be >= 0"
 nameMsg    = "name must not contain \"" `T.append` namePrompt `T.append` "\""

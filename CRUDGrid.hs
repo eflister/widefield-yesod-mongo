@@ -64,7 +64,7 @@ groupGet, formNewGet, formNewPost
             )
          => Grid s m p c
          -> GHandler s m RepHtml
-groupGet    g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> (makeGrid g $ Right Nothing) -- unkosher use of generateFormPost? 
+groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> (makeGrid g $ Right Nothing) -- unkosher use of generateFormPost? 
 formNewGet         = formNewPostGen False
 formNewPost        = formNewPostGen True
 formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
@@ -119,19 +119,21 @@ gridForm run g sel = do
 <form method=post action=@{postR} enctype=#{e}>
     ^{w}
 |]  
-    if run then do
-                ((r, w), e) <- runFormPost form
-                case r of FormSuccess (Just p) -> do
-                            flip (either (const . void . runDB $ insert p)) sel $ \pid -> do -- how tell if insert succeeded?
-                                let convert (GridField _ extract _ (Just (Editable _ pField True _))) = Just $ pField =. extract p
-                                    convert _ = Nothing
-                                runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if update succeeded?                                  
-                            setMessage "success"
-                            redirect $ groupR routes       
-                          _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
-           else do
-                (w, e) <- generateFormPost form
-                done w e
+    if run 
+        then do
+            ((r, w), e) <- runFormPost form
+            case r of 
+                FormSuccess (Just p) -> do
+                    flip (either . const . void . runDB $ insert p) sel $ \pid -> do -- how tell if insert succeeded?
+                        let convert (GridField _ extract _ (Just (Editable _ pField True _))) = Just $ pField =. extract p
+                            convert _ = Nothing
+                        runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if update succeeded?                                  
+                    setMessage "success"
+                    redirect $ groupR routes       
+                _ -> done w e -- use contents of failure somehow?  does fvErrors already get it all?
+        else do
+            (w, e) <- generateFormPost form
+            done w e
 
 getDefaultedViews :: ( RenderMessage m FormMessage
                      )
@@ -142,10 +144,11 @@ getDefaultedViews :: ( RenderMessage m FormMessage
                                )
 getDefaultedViews fields this = do
     let defView (mp, cs) (c, g) = (id *** (\x -> (c, x) : cs)) <$> 
-                case g of GridField _ extract _ (Just (Editable f _ True updater)) -> do
-                               (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
-                               return (updater <$> r <*> mp, Just v )
-                          _ -> return (                  mp, Nothing)
+            case g of 
+                GridField _ extract _ (Just (Editable f _ True updater)) -> do
+                    (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
+                    return (updater <$> r <*> mp, Just v )
+                _ -> return (                 mp, Nothing)
     foldM defView (pure this, []) fields
 
 {- makes a handler instead of a widget
@@ -187,7 +190,7 @@ makeGrid g sel = do
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
-        (rs, vs) <- getDefaultedViews fields . (flip (either $ Just . id) sel) $ (\x -> entityVal . head <$> (\x -> filter ((x ==) . entityKey ) items) <$> x)
+        (rs, vs) <- getDefaultedViews fields . flip (either $ Just . id) sel $ (\x -> entityVal . head <$> (\y -> filter ((y ==) . entityKey) items) <$> x) -- TODO: redirect if not found
         let getView = fromJust . (flip lookup vs)
             style = [lucius| .errors { color:red } |]
             mini (GridField _ extract display _) = display . extract
