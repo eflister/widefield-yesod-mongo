@@ -65,8 +65,8 @@ groupGet, formNewGet, formNewPost
          => Grid s m p c
          -> GHandler s m RepHtml
 groupGet g = defaultLayout . (setTitle (toHtml $ title g) >>) . fst =<< generateFormPost =<< fst <$> makeGrid g (Right Nothing) -- unkosher use of generateFormPost? 
-formNewGet         = formNewPostGen False
-formNewPost        = formNewPostGen True
+formNewGet  = formNewPostGen False
+formNewPost = formNewPostGen True
 formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
 
 formGet, formPost, formDelete
@@ -83,8 +83,8 @@ formGet, formPost, formDelete
          => Grid s m p c
          -> ID m p
          -> GHandler s m RepHtml
-formGet          = formGen False
-formPost         = formGen True
+formGet  = formGen False
+formPost = formGen True
 formGen  r g pid = gridForm r g $ Right pid
 formDelete g pid = do
     p <- runDB $ get pid
@@ -146,14 +146,14 @@ getDefaultedViews fields this = do
     let defView (mp, cs) (c, g) = second (\x -> (c, x) : cs) <$> 
             case g of 
                 GridField _ extract _ (Just (Editable f _ True updater)) -> do
-                    (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
-                    return (updater <$> r <*> mp, Just v )
-                _ -> return (                 mp, Nothing)
+                     (r, v) <- mreq f "unused" $ extract <$> this -- TODO: handle optional fields
+                     return (updater <$> r <*> mp, Just v )
+                _ -> return (                  mp, Nothing)
     foldM defView (pure this, []) fields
 
 {- makes a handler instead of a widget
 delForm i = do
-    (w, e) <- generateFormPost . renderDivs $ areq textField "Model" Nothing
+    (w, e) <- generateFormPost . renderDivs $ areq textField "stub" Nothing
 
     [whamlet|
 <form method=post action=@{i} enctype=#{e}>
@@ -191,11 +191,11 @@ makeGrid g sel = do
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
         (rs, vs) <- getDefaultedViews fields . flip (either $ Just . id) sel $ (\x -> entityVal . head <$> (\y -> filter ((y ==) . entityKey) items) <$> x) -- TODO: redirect if not found
-        let getView = fromJust . (`lookup` vs)
-            style = [lucius| .errors { color:red } |]
-            mini (GridField _ extract display _) = display . extract
-            disp x = mini x . entityVal
+        let getView  = fromJust . (`lookup` vs)
+            style    = [lucius| .errors { color:red } |]
+            disp x   = mini x . entityVal
             nediting = (const False ||| isNothing) sel
+            mini (GridField _ extract display _) = display . extract
             dispRow i = [whamlet|
 $forall (_, f) <- fields
     <td>
