@@ -28,7 +28,7 @@ data Routes m p =
            , deleteR :: ID m p -> Route m
            }
 
-data Grid s m p c =
+data Grid s m p c = 
     Grid { title       :: Text
          , allowDelete :: Bool
          , defaultNew  :: Maybe p
@@ -190,7 +190,7 @@ makeGrid g sel = do
     -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items
     let fields = (id &&& getField g) <$> [minBound..maxBound]
     return . (, routes g) $ \extra -> do
-        (rs, vs) <- getDefaultedViews fields . flip (either $ Just . id) sel $ (\x -> entityVal . head <$> (\y -> filter ((y ==) . entityKey) items) <$> x) -- TODO: redirect if not found
+        (rs, vs) <- getDefaultedViews fields . flip (either $ Just . id) sel $ (entityVal . head . (\y -> filter ((y ==) . entityKey) items) <$>) -- TODO: redirect if not found -- notice this is never called if no items have the requested id, so we never head []
         let getView  = fromJust . (`lookup` vs)
             style    = [lucius| .errors { color:red } |]
             disp x   = mini x . entityVal
