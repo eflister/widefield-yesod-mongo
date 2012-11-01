@@ -10,7 +10,7 @@
 /people                  PeopleR       GET
 /people/#PersonId        PersonR       GET POST
 /newPerson               NewPersonR    GET POST
-/people/delete/#PersonId DeletePersonR GET
+/people/delete/#PersonId DeletePersonR     POST
 
 /overview                             OverviewR GET
 /image/#Subject/#Analysis/#TrialRange ImageR    GET

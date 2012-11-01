@@ -9,10 +9,10 @@ getPeopleR     = groupGet    peopleGrid
 getNewPersonR  = formNewGet  peopleGrid
 postNewPersonR = formNewPost peopleGrid
 
-getPersonR, postPersonR, getDeletePersonR :: PersonId -> Handler RepHtml
-getPersonR       = formGet    peopleGrid
-postPersonR      = formPost   peopleGrid
-getDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
+getPersonR, postPersonR, postDeletePersonR :: PersonId -> Handler RepHtml
+getPersonR        = formGet    peopleGrid
+postPersonR       = formPost   peopleGrid
+postDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
 
 data PersonColumn = Name | Age
    deriving (Eq, Show, Bounded, Enum)
@@ -20,8 +20,8 @@ data PersonColumn = Name | Age
 peopleGrid :: Grid s App Person PersonColumn
 peopleGrid = Grid "People" True (Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) $ \c -> case c of 
 --  Name -> GridField show personName T.unpack Nothing
-    Name -> GridField show personName T.unpack . Just $ Editable nameField PersonName True (\x p -> (\y -> y{personName = x}) <$> p)
-    Age  -> GridField show personAge  show     . Just $ Editable ageField  PersonAge  True (\x p -> (\y -> y{personAge  = x}) <$> p)
+    Name -> GridField show personName T.unpack . Just $ Editable nameField PersonName True (\x y -> y{personName = x})
+    Age  -> GridField show personAge  show     . Just $ Editable ageField  PersonAge  True (\x y -> y{personAge  = x})
 
 ageField :: Integral a => Field s App a
 ageField = checkBool (>= 0) ageMsg intField
