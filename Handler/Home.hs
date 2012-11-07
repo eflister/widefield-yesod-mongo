@@ -58,8 +58,8 @@ content (handlerName :: Text)
             setTitle "Welcome To Yesod!"
             stuff <- liftIO $ do
                 let log = "log.txt"
-                void $ rawSystem "matlab" ["-nodesktop", "-nosplash", "-wait", "-logfile", log, "-r", "x=2;x+2,quit"]
-                lg <- readFile log
+                void $ rawSystem matlab32 ["-nodesktop", "-nosplash", "-wait", "-logfile", log, "-sd", matlabDir, "-r", "setupEnvironment,collectInfo,quit"]
+                lg <- readFile $ matlabDir </> log
                 return . splitOn "\n" $ T.unpack lg
 {-
             people <- lift . runDB $ do
@@ -71,6 +71,9 @@ content (handlerName :: Text)
             [whamlet| hi #{personName =<< people}<p> |]
 -}
             $(widgetFile "homepage")
+
+matlabDir = "C:\\Users\\nlab\\Desktop\\ratrix\\bootstrap"
+matlab32  = "C:\\Program Files (x86)\\MATLAB\\R2011b\\bin\\matlab.exe"
 
 sampleForm :: Form (FileInfo, Text)
 sampleForm = renderDivs $ (,)

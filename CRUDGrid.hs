@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, TupleSections #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module CRUDGrid
     ( Grid      (..)
@@ -11,6 +11,7 @@ module CRUDGrid
     , formDelete
     , formNewGet
     , formNewPost
+    , showFieldByID
     ) where
 
 import Import
@@ -30,6 +31,7 @@ data Routes m p =
 
 data Grid s m p c = 
     Grid { title       :: Text
+         , opts        :: [SelectOpt p] -- need some way to sort on indirect fields
          , allowDelete :: Bool
          , defaultNew  :: Maybe p
          , routes      :: Routes m p
@@ -39,7 +41,7 @@ data Grid s m p c =
 data GridField s m p c = forall t. (PersistField t) =>
   GridField { heading  :: c -> String
             , extract  :: p -> t
-            , display  :: t -> String
+            , display  :: Either (t -> String) (t -> GWidget s m ())
             , editable :: Maybe (Editable s m t p)
             }
 
@@ -66,6 +68,20 @@ groupGet, formNewGet, formNewPost
 groupGet g = gridForm False g $ Right Nothing
 formNewGet  = formNewPostGen False
 formNewPost = formNewPostGen True
+
+formNewPostGen :: ( Bounded c
+                  , Enum c
+                  , Eq c
+                  , YesodPersist m
+                  , Yesod m
+                  , RenderMessage m FormMessage
+                  , PersistEntity b
+                  , PersistQuery (PersistEntityBackend b) (GHandler s m)
+                  , YesodPersistBackend m ~ PersistEntityBackend b
+                  ) 
+               => Bool 
+               -> Grid s m b c 
+               -> GHandler s m RepHtml
 formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
 
 formGet, formPost, formDelete
@@ -84,6 +100,21 @@ formGet, formPost, formDelete
          -> GHandler s m RepHtml
 formGet  = formGen False
 formPost = formGen True
+
+formGen :: ( Bounded c
+           , Enum c
+           , Eq c
+           , YesodPersist m
+           , Yesod m
+           , RenderMessage m FormMessage
+           , PersistEntity p
+           , PersistQuery (PersistEntityBackend p) (GHandler s m)
+           , YesodPersistBackend m ~ PersistEntityBackend p
+           ) 
+        => Bool 
+        -> Grid s m p c 
+        -> ID m p 
+        -> GHandler s m RepHtml
 formGen  r g pid = gridForm r g . Right $ Just pid
 formDelete g pid = do
     p <- runDB $ get pid
@@ -94,6 +125,7 @@ formDelete g pid = do
             setMessage "success"
     redirect . groupR $ routes g
 
+noneFoundMsg :: Html
 noneFoundMsg = "no object for that id"
 
 gridForm :: ( Bounded c
@@ -116,16 +148,15 @@ gridForm run g sel = do
         goGroup = redirect $ groupR rts
         postR   = (const (newR rts) ||| (indR rts . fromJust)) sel 
 
-    items <- runDB $ selectList [] []
-    -- liftIO . mapM_ (putStrLn . show) $ entityKey <$> items 
+    items <- runDB . selectList [] $ opts g
 
-    let False <> _ = Nothing
-        True  <> x = x
+    let False +> _ = Nothing
+        True  +> x = x
         (allowActions, title') = case sel of 
             Left        _  -> (False, "create new"    )
             Right (Just _) -> (False, "edit item"     )
             Right Nothing  -> (True , toHtml $ title g)
-        (dels, edits) = first (allowDelete g <>) $ join (***) (allowActions <>) (Just $ deleteR rts, Just $ indR rts)
+        (dels, edits) = first (allowDelete g +>) $ join (***) (allowActions +>) (Just $ deleteR rts, Just $ indR rts)
 
     rows <- mapM (makeRow fields dels edits) items
 
@@ -140,9 +171,8 @@ gridForm run g sel = do
 
     let sel' = right ((\y -> filter ((y ==) . entityKey) items) <$>) sel
         
-    case sel' of Right (Just []) -> setMessage noneFoundMsg >> goGroup
-                 Right (Just x ) -> if length x > 1 then setMessage "error: multiple matches with that id"
-                                                    else return undefined
+    case sel' of Right (Just []     ) -> setMessage noneFoundMsg >> goGroup
+                 Right (Just (_:_:_)) -> setMessage "error: multiple matches with that id"
                  _ -> return undefined
 
     case editForm (groupR rts) fields <$> (Just ||| (entityVal . head <$>) $ sel') of 
@@ -154,7 +184,7 @@ gridForm run g sel = do
                     case r of 
                         FormSuccess p -> do
                             flip (either . const . void . runDB $ insert p) sel $ \(Just pid) -> do -- how tell if insert succeeded?
-                                let convert (GridField _ extract _ (Just (Editable _ pField True _))) = Just $ pField =. extract p
+                                let convert (GridField _ extract' _ (Just (Editable _ pField' True _))) = Just $ pField' =. extract' p
                                     convert _ = Nothing
                                 runDB . update pid . catMaybes $ convert . getField g <$> [minBound..maxBound] -- how tell if update succeeded?                                  
                             setMessage "success"
@@ -179,24 +209,24 @@ makeRow :: ( Bounded c
         -> Maybe (ID m p -> Route m)
         -> Entity p
         -> GHandler s m (ID m p, GWidget s m ())
-makeRow fields allowDelete allowEdit i = do
+makeRow fields allowDelete' allowEdit i = do
     let disp x = mini x . entityVal
         raw    = [whamlet|
 $forall (_, f) <- fields
     <td>
-        #{disp f i}
+        ^{disp f i}
 $# -- TODO: if no fields editable, don't show this (or render action column, or allow item routes)
-$maybe indR <- allowEdit
+$maybe indR' <- allowEdit
     <td>
-        <a href=@{indR $ entityKey i}> edit 
+        <a href=@{indR' $ entityKey i}> edit 
 |]
     (w, e) <- generateFormPost $ \extra -> return (pure undefined, [whamlet| ^{extra} |]) 
     let widget = [whamlet|
 ^{raw}
 <td>
-    $maybe deleteR <- allowDelete
+    $maybe deleteR' <- allowDelete'
         $# how specify method DELETE?
-        <form method=post action=@{deleteR $ entityKey i} enctype=#{e}>
+        <form method=post action=@{deleteR' $ entityKey i} enctype=#{e}>
             ^{w}
             <input type="submit" value="delete">
 |]
@@ -227,7 +257,7 @@ makeGrid postR sel fields rows w e = do
 |]
     [whamlet|
 ^{style}
-<table>
+<table style="border-spacing: 20px 0; border-collapse: separate">
     <thead>
         <tr>
             $forall (c, f) <- fields
@@ -248,7 +278,26 @@ makeGrid postR sel fields rows w e = do
                 ^{form}
 |]
 
-mini (GridField _ extract display _) = display . extract
+mini :: GridField t t1 t2 t3 -> t2 -> GWidget t t1 ()
+mini (GridField _ extract' display' _) = ((((\x -> [whamlet|#{x}|]) .) ||| id) display') . extract'
+
+showFieldByID :: ( YesodPersist m
+                 , PersistStore (YesodPersistBackend m) (GHandler s m)
+                 , PersistEntity p
+                 ) 
+              => Maybe (ID m p -> Route m)
+              -> (b -> String)
+              -> (p -> b)
+              -> ID m p
+              -> GWidget s m ()
+showFieldByID r s f id' = do
+    x <- lift $ s . f . fromJust <$> (runDB $ get id')
+    [whamlet|
+$maybe route <- r
+    <a href=@{route id'}> #{x}
+$nothing
+    #{x} 
+|]
 
 editForm :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
@@ -266,7 +315,7 @@ editForm :: ( PersistEntity p
          -> MForm s m ( FormResult p
                       , GWidget s m ()
                       )
-editForm groupR fields this extra = do
+editForm groupR' fields this extra = do
     (rs, vs) <- getDefaultedViews fields this
     let getView = fromJust . (`lookup` vs)
         w = [whamlet|
@@ -283,11 +332,11 @@ $forall (c, f) <- fields
                     $maybe err <- fvErrors view
                         <div .errors >#{err}
         $nothing
-            #{mini f this}
+            ^{mini f this}
 <td>
     <input type="submit" value="save">
 <td>
-    <a href=@{groupR}> 
+    <a href=@{groupR'}> 
         <input type="button" value="cancel">
 |]
     return (rs, w)
@@ -302,8 +351,8 @@ getDefaultedViews :: ( RenderMessage m FormMessage
 getDefaultedViews fields this = do
     let defView (mp, cs) (c, g) = second (\x -> (c, x) : cs) <$> 
             case g of 
-                GridField _ extract _ (Just (Editable f _ True updater)) -> do
-                     (r, v) <- mreq f "unused" . Just $ extract this -- TODO: handle optional fields
-                     return (updater <$> r <*> mp, Just v )
-                _ -> return (                  mp, Nothing)
+                GridField _ extract' _ (Just (Editable f _ True updater')) -> do
+                     (r, v) <- mreq f "unused" . Just $ extract' this -- TODO: handle optional fields
+                     return (updater' <$> r <*> mp, Just v )
+                _ -> return (                   mp, Nothing)
     foldM defView (pure this, []) fields
