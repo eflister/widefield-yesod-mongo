@@ -5,6 +5,7 @@ module CRUDGrid
     , GridField (..)
     , Editable  (..)
     , Routes    (..)
+    , JSGrid    (..)
     , groupGet
     , formGet
     , formPost
@@ -12,6 +13,7 @@ module CRUDGrid
     , formNewGet
     , formNewPost
     , showFieldByID
+    , makeStatic
     ) where
 
 import Import
@@ -19,6 +21,8 @@ import Control.Arrow
 import Control.Monad
 import Data.Maybe
 import Prelude (head)
+import Data.List.Split
+import qualified Data.Text as T
 
 type ID m p = Key (YesodPersistBackend m) p
 
@@ -35,13 +39,14 @@ data Grid s m p c =
          , allowDelete :: Bool
          , defaultNew  :: Maybe p
          , routes      :: Routes m p
+         , jsgrid      :: Maybe (JSGrid m)
          , getField    :: c -> GridField s m p c
          }
 
 data GridField s m p c = forall t. (PersistField t) =>
   GridField { heading  :: c -> String
             , extract  :: p -> t
-            , display  :: Either (t -> String) (t -> GWidget s m ())
+            , display  :: Either (t -> String) (t -> (Maybe (ID m p -> Route m), String, ID m p))
             , editable :: Maybe (Editable s m t p)
             }
 
@@ -51,6 +56,9 @@ data Editable s m t p =
            , required :: Bool
            , updater  :: t -> p -> p -- required to avoid "Record update for insufficiently polymorphic field"
            }
+
+data JSGrid m = JQGrid ([Route m], [Route m])
+              | DGrid (Route m) [(Text, Text)]
 
 groupGet, formNewGet, formNewPost
          :: ( Bounded c
@@ -128,6 +136,8 @@ formDelete g pid = do
 noneFoundMsg :: Html
 noneFoundMsg = "no object for that id"
 
+makeStatic p = StaticR $ StaticRoute (T.pack <$> splitOn "/" p) []
+
 gridForm :: ( Bounded c
             , Enum c
             , Eq c
@@ -160,9 +170,63 @@ gridForm run g sel = do
 
     rows <- mapM (makeRow fields dels edits) items
 
+    gridID <- newIdent
+
     let done w e = defaultLayout $ do
             setTitle title'
-            makeGrid postR sel fields rows w e
+            let htmlGrid = makeGrid postR sel fields rows w e gridID
+            case jsgrid g of
+                        Nothing -> htmlGrid $ Just "border-spacing: 20px 0; border-collapse: separate"
+                        Just (DGrid script attrs) -> do
+                            addScriptAttrs script attrs
+{-
+    let c = T.unlines
+              [ " async: 1,                                                                                       " 
+              , " dojoBlankHtmlUrl: '/../static/cpm_packages/dojo/resources/blank.html',                          "
+              , " packages: [ {                                                                                   "
+              , "   name: 'dgrid',                                                                                "
+              , "   location: location.pathname.replace(/\\/[^/]+$/, '') + '/../static/cpm_packages/dgrid'        "
+              , "  },{                                                                                            "
+              , "   name: 'put-selector',                                                                         "
+              , "   location: location.pathname.replace(/\\/[^/]+$/, '') + '/../static/cpm_packages/put-selector' "
+              , "  },{                                                                                            "
+              , "   name: 'xstyle',                                                                               "
+              , "   location: location.pathname.replace(/\\/[^/]+$/, '') + '/../static/cpm_packages/xstyle'       "
+              , " } ]                                                                                             "
+              ]
+
+        {-
+        -- multiline string literal not working on windows (\r problem?)
+            let c = "async: 1,                                                                                /
+                   / packages: [ {                                                                            /
+                   /   name: 'dgrid',                                                                         /
+                   /   location: location.pathname.replace(/\\/[^/]+$/, '') + '/../static/cpm_packages/dgrid' /
+                   / } ]"
+        -}
+
+    addScriptRemoteAttrs "//ajax.googleapis.com/ajax/libs/dojo/1.8.0/dojo/dojo.js" [("data-dojo-config",c)] -- 1.8.1 is 404'ing
+-}                            
+                            htmlGrid Nothing
+                        Just (JQGrid (sheets, scripts)) -> do
+                            mapM_ addStylesheet sheets
+                            toWidget [lucius|
+html, body {
+    margin: 0;
+    padding: 0;
+//  font-size: 75%;
+}
+.ui-jqgrid tr.jqgrow td {white-space:normal;}
+|]
+                            addScriptRemote "//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"
+                         -- addScriptRemote "//ajax.googleapis.com/ajax/libs/jqueryui/1.9.1/jquery-ui.min.js"
+                            mapM_ addScript scripts
+                            toWidget [julius| 
+$(document).ready(function() {
+    jQuery.extend(jQuery.jgrid.defaults, { altRows:true, height:"auto" });
+    tableToGrid("##{gridID}", { shrinkToFit:true, width:350  }) 
+});                
+|]
+                            htmlGrid $ Just ""
             when (isJust (defaultNew g) && (const False ||| isNothing) sel)
                 [whamlet|
 <a href=@{newR rts}> 
@@ -208,13 +272,13 @@ makeRow :: ( Bounded c
         -> Maybe (ID m p -> Route m)
         -> Maybe (ID m p -> Route m)
         -> Entity p
-        -> GHandler s m (ID m p, GWidget s m ())
+        -> GHandler s m (ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])
 makeRow fields allowDelete' allowEdit i = do
     let disp x = mini x . entityVal
         raw    = [whamlet|
 $forall (_, f) <- fields
     <td>
-        ^{disp f i}
+        ^{toWhamlet $ disp f i}
 $# -- TODO: if no fields editable, don't show this (or render action column, or allow item routes)
 $maybe indR' <- allowEdit
     <td>
@@ -230,7 +294,8 @@ $maybe indR' <- allowEdit
             ^{w}
             <input type="submit" value="delete">
 |]
-    return (entityKey i, widget)
+    let jsob = {- toJSON $ -} ((\(c,f) -> heading f $ c) &&& (flip disp i . snd)) <$> fields -- [(String, GWidget s m ())]
+    return (entityKey i, widget, jsob)
 
 makeGrid :: ( Bounded c
             , Enum c
@@ -245,26 +310,31 @@ makeGrid :: ( Bounded c
          => Route m
          -> Either p (Maybe (ID m p))
          -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m ())]
+         -> [(ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])]
          -> GWidget s m ()
          -> Enctype
+         -> Text
+         -> Maybe Text 
          -> GWidget s m ()
-makeGrid postR sel fields rows w e = do
+makeGrid postR sel fields rows w e gid tstyle = do
     let style = [lucius| .errors { color:red } |]
         form  = [whamlet|
 <form method=post action=@{postR} enctype=#{e}>
     ^{w}
 |]
-    [whamlet|
-^{style}
-<table style="border-spacing: 20px 0; border-collapse: separate">
+        grid = case tstyle of
+            Just tstyle' -> [whamlet|
+<table style=#{tstyle'} id=#{gid}>
     <thead>
         <tr>
             $forall (c, f) <- fields
                 <th> #{heading f $ c}
             $# <th> actions
+            $if tstyle' == ""
+                <th> edit
+                <th> delete
     <tbody>
-        $forall (rkey, row) <- rows
+        $forall (rkey, row, _) <- rows
             <tr>        
                 $maybe key <- (const Nothing ||| id) sel
                     $if key == rkey
@@ -277,9 +347,15 @@ makeGrid postR sel fields rows w e = do
             <tr>
                 ^{form}
 |]
+            Nothing -> dgrid gid fields rows sel form
+    [whamlet|
+^{style}
+^{grid}
+|]
 
-mini :: GridField t t1 t2 t3 -> t2 -> GWidget t t1 ()
-mini (GridField _ extract' display' _) = ((((\x -> [whamlet|#{x}|]) .) ||| id) display') . extract'
+-- mini :: GridField t t1 t2 t3 -> t2 -> GWidget t t1 ()
+-- mini (GridField _ extract' display' _) = ((((\x -> [whamlet|#{x}|]) .) ||| id) display') . extract'
+mini (GridField _ extract' display' _) = ((((\x -> (Nothing, x, undefined)) .) ||| id) display') . extract'
 
 showFieldByID :: ( YesodPersist m
                  , PersistStore (YesodPersistBackend m) (GHandler s m)
@@ -289,15 +365,28 @@ showFieldByID :: ( YesodPersist m
               -> (b -> String)
               -> (p -> b)
               -> ID m p
-              -> GWidget s m ()
+              -> GHandler s m (Maybe (ID m p -> Route m), String, ID m p)
 showFieldByID r s f id' = do
-    x <- lift $ s . f . fromJust <$> (runDB $ get id')
-    [whamlet|
+    x <- s . f . fromJust <$> (runDB $ get id')
+    return (r, x, id')
+
+toWhamlet :: (Maybe (ID m p -> Route m), String, ID m p) 
+          -> GWidget s m ()
+toWhamlet (r, x, id') = [whamlet|
 $maybe route <- r
     <a href=@{route id'}> #{x}
 $nothing
     #{x} 
 |]
+
+{-
+toJulius :: (Maybe (ID m p -> Route m), String, ID m p) 
+         -> (Route m -> [t] -> Text) 
+         -> Text.Julius.Javascript
+-}
+toJulius (r, x, id') = case r of 
+    Nothing ->    [julius|                       #{x} |]
+    Just route -> [julius| <a href=@{route id'}> #{x} |]
 
 editForm :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
@@ -332,7 +421,7 @@ $forall (c, f) <- fields
                     $maybe err <- fvErrors view
                         <div .errors >#{err}
         $nothing
-            ^{mini f this}
+            ^{toWhamlet $ mini f this}
 <td>
     <input type="submit" value="save">
 <td>
@@ -356,3 +445,91 @@ getDefaultedViews fields this = do
                      return (updater' <$> r <*> mp, Just v )
                 _ -> return (                   mp, Nothing)
     foldM defView (pure this, []) fields
+
+dgrid ::    Text
+         -> [(c, GridField s m p c)]
+         -> [(ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])]
+         -> Either p (Maybe (ID m p))
+         -> GWidget s m ()
+         -> GWidget s m ()
+dgrid gridID fields rows sel form = do
+    let -- could probably use http://hackage.haskell.org/packages/archive/aeson/latest/doc/html/Data-Aeson.html#t:ToJSON
+        gData    = mconcat $ (\(_,_,rs) -> [julius|                   {^{doRow rs}                                       }, |]) <$> rows
+        doRow rs = mconcat $ (\(c,f)    -> [julius| #{heading f $ c}: "^{toJulius (fromJust $ lookup (heading f $ c) rs)}", |]) <$> fields
+{-
+             $forall (_,_,_) <- rows
+                 {
+                 $forall (c,f) <- fields
+                     #{heading f $ c}:"placeholder",
+                 },
+-}       
+        gCols = mconcat $ (\(c,f) -> [julius| #{heading f $ c}: { label: "#{heading f $ c}"}, |]) <$> fields
+{-
+                $forall (c,f) <- fields
+                    $with h <- heading f $ c
+                        #{h}: { label: "#{h}"},
+-}
+        dgs = [julius|
+require(["dojo/_base/declare", "dgrid/Grid", "dgrid/Keyboard", "dgrid/Selection", "dojo/dom", "dojo/fx", "dojo/request", "dojo/domReady!"],
+    function(declare, Grid, Keyboard, Selection, dom, fx, request){
+        var data = [
+            ^{gData}
+
+            // { first: "Bob"  , last: "Barker", age: 89 },
+            // { first: "Vanna", last: "White" , age: 55 },
+            // { first: "Pat"  , last: "Sajak" , age: 65 }            
+        ];
+
+        // Create a new constructor by mixing in the components
+        var CustomGrid = declare([ Grid, Keyboard, Selection ]);
+ 
+        // Now, create an instance of our custom grid which
+        // have the features we added!
+        var grid = new CustomGrid({
+            columns: {
+                ^{gCols}
+
+                //first: {
+                //    label: "First Name"
+                //},
+                //last: {
+                //    label: "Last Name"
+                //},
+                //age: {
+                //    label: "Age",
+                //    renderCell: function(row, value, td, options){
+                //        console.log(row);
+                //        console.log(value);
+                //        console.log(td);
+                //        td.innerHTML = "<h1>hi " + value.toString() + "</h1>";
+                //        //console.log(options)
+                //        // unpack rows with widgetToPageContent
+                //    } 
+                //}
+            },
+            selectionMode: "single", // for Selection; only select a single row at a time
+            cellNavigation: false // for Keyboard; allow only row-level keyboard navigation
+        }, #{gridID});
+
+        grid.renderArray(data);
+
+        grid.on(".dgrid-row:click", function(event){
+            console.log("Row clicked:", grid.row(event).id);
+ 
+            request("static/helloworld.txt").then(
+                function(text){
+                    console.log("The file's contents is: " + text);
+                },
+                function(error){
+                    console.log("An error occurred: " + error);
+                }
+            );
+
+        });
+});
+|]
+
+    [whamlet| 
+^{dgs}
+<div id=#{gridID}>
+|]

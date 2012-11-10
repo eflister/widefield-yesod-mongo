@@ -1,2 +1,4 @@
 /static/cpm_packages/
+/static/tmp/
+/static/jquery*/
 /dist
