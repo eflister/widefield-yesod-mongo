@@ -46,7 +46,7 @@ data Grid s m p c =
 data GridField s m p c = forall t. (PersistField t) =>
   GridField { heading  :: c -> String
             , extract  :: p -> t
-            , display  :: Either (t -> String) (t -> (Maybe (ID m p -> Route m), String, ID m p))
+            , display  :: Either (t -> String) (t -> (Maybe (Route m), String))
             , editable :: Maybe (Editable s m t p)
             }
 
@@ -272,7 +272,7 @@ makeRow :: ( Bounded c
         -> Maybe (ID m p -> Route m)
         -> Maybe (ID m p -> Route m)
         -> Entity p
-        -> GHandler s m (ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])
+        -> GHandler s m (ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])
 makeRow fields allowDelete' allowEdit i = do
     let disp x = mini x . entityVal
         raw    = [whamlet|
@@ -310,7 +310,7 @@ makeGrid :: ( Bounded c
          => Route m
          -> Either p (Maybe (ID m p))
          -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])]
+         -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
          -> GWidget s m ()
          -> Enctype
          -> Text
@@ -353,9 +353,7 @@ makeGrid postR sel fields rows w e gid tstyle = do
 ^{grid}
 |]
 
--- mini :: GridField t t1 t2 t3 -> t2 -> GWidget t t1 ()
--- mini (GridField _ extract' display' _) = ((((\x -> [whamlet|#{x}|]) .) ||| id) display') . extract'
-mini (GridField _ extract' display' _) = ((((\x -> (Nothing, x, undefined)) .) ||| id) display') . extract'
+mini (GridField _ extract' display' _) = ((((\x -> (Nothing, x)) .) ||| id) display') . extract'
 
 showFieldByID :: ( YesodPersist m
                  , PersistStore (YesodPersistBackend m) (GHandler s m)
@@ -365,28 +363,28 @@ showFieldByID :: ( YesodPersist m
               -> (b -> String)
               -> (p -> b)
               -> ID m p
-              -> GHandler s m (Maybe (ID m p -> Route m), String, ID m p)
+              -> GHandler s m (Maybe (Route m), String)
 showFieldByID r s f id' = do
     x <- s . f . fromJust <$> (runDB $ get id')
-    return (r, x, id')
+    return (r <*> pure id', x)
 
-toWhamlet :: (Maybe (ID m p -> Route m), String, ID m p) 
+toWhamlet :: (Maybe (Route m), String) 
           -> GWidget s m ()
-toWhamlet (r, x, id') = [whamlet|
+toWhamlet (r, x) = [whamlet|
 $maybe route <- r
-    <a href=@{route id'}> #{x}
+    <a href=@{route}> #{x}
 $nothing
     #{x} 
 |]
 
 {-
-toJulius :: (Maybe (ID m p -> Route m), String, ID m p) 
+toJulius :: (Maybe (Route m), String) 
          -> (Route m -> [t] -> Text) 
          -> Text.Julius.Javascript
 -}
-toJulius (r, x, id') = case r of 
-    Nothing ->    [julius|                       #{x} |]
-    Just route -> [julius| <a href=@{route id'}> #{x} |]
+toJulius (r, x) = case r of 
+    Nothing    -> [julius|                   #{x} |] -- this space shows up in the values!
+    Just route -> [julius| <a href=@{route}> #{x} |]
 
 editForm :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
@@ -448,14 +446,14 @@ getDefaultedViews fields this = do
 
 dgrid ::    Text
          -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m (), [(String, (Maybe (ID m p -> Route m), String, ID m p))])]
+         -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
          -> Either p (Maybe (ID m p))
          -> GWidget s m ()
          -> GWidget s m ()
 dgrid gridID fields rows sel form = do
     let -- could probably use http://hackage.haskell.org/packages/archive/aeson/latest/doc/html/Data-Aeson.html#t:ToJSON
-        gData    = mconcat $ (\(_,_,rs) -> [julius|                   {^{doRow rs}                                       }, |]) <$> rows
-        doRow rs = mconcat $ (\(c,f)    -> [julius| #{heading f $ c}: "^{toJulius (fromJust $ lookup (heading f $ c) rs)}", |]) <$> fields
+        gData   = mconcat $ (\(_,_,r) -> [julius|                   {^{doRow r}                                       }, |]) <$> rows
+        doRow r = mconcat $ (\(c,f)   -> [julius| #{heading f $ c}: "^{toJulius (fromJust $ lookup (heading f $ c) r)}", |]) <$> fields
 {-
              $forall (_,_,_) <- rows
                  {
@@ -463,7 +461,12 @@ dgrid gridID fields rows sel form = do
                      #{heading f $ c}:"placeholder",
                  },
 -}       
-        gCols = mconcat $ (\(c,f) -> [julius| #{heading f $ c}: { label: "#{heading f $ c}"}, |]) <$> fields
+        gCols = mconcat $ (\(c,f) -> [julius| #{heading f $ c}: { label: "#{heading f $ c}"
+                                                                , renderCell: function (row, value, td, options){
+                                                                    td.innerHTML = value; //this is so links render, but causes other angle bracketed strings to unescape as well :(
+                                                                  }
+                                                                }, 
+                                     |]) <$> fields
 {-
                 $forall (c,f) <- fields
                     $with h <- heading f $ c
@@ -503,7 +506,6 @@ require(["dojo/_base/declare", "dgrid/Grid", "dgrid/Keyboard", "dgrid/Selection"
                 //        console.log(td);
                 //        td.innerHTML = "<h1>hi " + value.toString() + "</h1>";
                 //        //console.log(options)
-                //        // unpack rows with widgetToPageContent
                 //    } 
                 //}
             },
