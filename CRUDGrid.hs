@@ -23,6 +23,8 @@ import Data.Maybe
 import Prelude (head)
 import Data.List.Split
 import qualified Data.Text as T
+import Text.Blaze.Renderer.String
+import Text.Blaze
 
 type ID m p = Key (YesodPersistBackend m) p
 
@@ -294,7 +296,7 @@ $maybe indR' <- allowEdit
             ^{w}
             <input type="submit" value="delete">
 |]
-    let jsob = {- toJSON $ -} ((\(c,f) -> heading f $ c) &&& (flip disp i . snd)) <$> fields -- [(String, GWidget s m ())]
+    let jsob = ((\(c,f) -> heading f $ c) &&& (flip disp i . snd)) <$> fields
     return (entityKey i, widget, jsob)
 
 makeGrid :: ( Bounded c
@@ -377,14 +379,9 @@ $nothing
     #{x} 
 |]
 
-{-
-toJulius :: (Maybe (Route m), String) 
-         -> (Route m -> [t] -> Text) 
-         -> Text.Julius.Javascript
--}
 toJulius (r, x) = case r of 
-    Nothing    -> [julius|                   #{x} |] -- this space shows up in the values!
-    Just route -> [julius| <a href=@{route}> #{x} |]
+    Nothing    -> [julius|                   escapeHTML("#{x}") |]
+    Just route -> [julius| <a href=@{route}> escapeHTML("#{x}") |]
 
 editForm :: ( PersistEntity p
             , PersistQuery (YesodPersistBackend m) (GHandler s m)
@@ -453,7 +450,7 @@ dgrid ::    Text
 dgrid gridID fields rows sel form = do
     let -- could probably use http://hackage.haskell.org/packages/archive/aeson/latest/doc/html/Data-Aeson.html#t:ToJSON
         gData   = mconcat $ (\(_,_,r) -> [julius|                   {^{doRow r}                                       }, |]) <$> rows
-        doRow r = mconcat $ (\(c,f)   -> [julius| #{heading f $ c}: "^{toJulius (fromJust $ lookup (heading f $ c) r)}", |]) <$> fields
+        doRow r = mconcat $ (\(c,f)   -> [julius| #{heading f $ c}:  ^{toJulius (fromJust $ lookup (heading f $ c) r) }, |]) <$> fields
 {-
              $forall (_,_,_) <- rows
                  {
@@ -461,9 +458,10 @@ dgrid gridID fields rows sel form = do
                      #{heading f $ c}:"placeholder",
                  },
 -}       
+        -- how get into the guts of a widget?  renderMarkup . toMarkup . pageBody ??? $ widgetToPageContent form
         gCols = mconcat $ (\(c,f) -> [julius| #{heading f $ c}: { label: "#{heading f $ c}"
                                                                 , renderCell: function (row, value, td, options){
-                                                                    td.innerHTML = value; //this is so links render, but causes other angle bracketed strings to unescape as well :(
+                                                                    td.innerHTML = value; //so links render
                                                                   }
                                                                 }, 
                                      |]) <$> fields
@@ -492,22 +490,22 @@ require(["dojo/_base/declare", "dgrid/Grid", "dgrid/Keyboard", "dgrid/Selection"
             columns: {
                 ^{gCols}
 
-                //first: {
-                //    label: "First Name"
-                //},
-                //last: {
-                //    label: "Last Name"
-                //},
-                //age: {
-                //    label: "Age",
-                //    renderCell: function(row, value, td, options){
-                //        console.log(row);
-                //        console.log(value);
-                //        console.log(td);
-                //        td.innerHTML = "<h1>hi " + value.toString() + "</h1>";
-                //        //console.log(options)
-                //    } 
-                //}
+                // first: {
+                //     label: "First Name"
+                // },
+                // last: {
+                //     label: "Last Name"
+                // },
+                // age: {
+                //     label: "Age",
+                //     renderCell: function(row, value, td, options){
+                //         console.log(row);
+                //         console.log(value);
+                //         console.log(td);
+                //         td.innerHTML = "<h1>hi " + value.toString() + "</h1>";
+                //         //console.log(options)
+                //     } 
+                // }
             },
             selectionMode: "single", // for Selection; only select a single row at a time
             cellNavigation: false // for Keyboard; allow only row-level keyboard navigation
@@ -529,6 +527,15 @@ require(["dojo/_base/declare", "dgrid/Grid", "dgrid/Keyboard", "dgrid/Selection"
 
         });
 });
+
+//http://blog.nickburwell.com/2011/02/escape-html-tags-in-javascript.html
+function escapeHTML( string ){
+    var pre = document.createElement('pre');
+    var text = document.createTextNode( string );
+    pre.appendChild(text);
+    return pre.innerHTML;
+}
+
 |]
 
     [whamlet| 
