@@ -20,7 +20,7 @@ data PersonColumn = Name | Age
    deriving (Eq, Show, Bounded, Enum)
 
 peopleGrid :: Grid s App Person PersonColumn
-peopleGrid = Grid "People" [] True (Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) (Just jqg) $ \c -> case c of 
+peopleGrid = Grid "People" [] True (Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) (Just djdg) $ \c -> case c of 
 --  Name -> GridField show personName (Left T.unpack)   Nothing
     Name -> GridField show personName (Left T.unpack) . Just $ Editable nameField PersonName True (\x y -> y{personName = x})
     Age  -> GridField show personAge  (Left show    ) . Just $ Editable ageField  PersonAge  True (\x y -> y{personAge  = x})

@@ -227,7 +227,7 @@ makeGrid :: ( PersistEntity p
          -> Maybe Html 
          -> GWidget s m ()
 makeGrid sel fields rows gridID this groupR' getView tstyle extra = case tstyle of
-    Nothing -> dgrid gridID fields rows sel getView
+    Nothing -> dgrid gridID fields rows sel getView extra
     Just tstyle' -> do
         let style = [lucius| .errors { color:red } |]
             form  = [whamlet|
@@ -304,9 +304,8 @@ editForm groupR' fields rows sel gridID jsgrid' this' = do
         let htmlGrid = makeGrid sel fields rows gridID this' groupR' getView
         case jsgrid' of
             Nothing -> htmlGrid $ Just "border-spacing: 20px 0; border-collapse: separate"
-{-            
-            Just (DGrid script attrs) -> do
-                            addScriptAttrs script attrs
+            Just (DGrid script attrs) -> \extra -> do
+                addScriptAttrs script attrs
 {-
     let c = T.unlines
               [ " async: 1,                                                                                       " 
@@ -334,8 +333,7 @@ editForm groupR' fields rows sel gridID jsgrid' this' = do
 
     addScriptRemoteAttrs "//ajax.googleapis.com/ajax/libs/dojo/1.8.0/dojo/dojo.js" [("data-dojo-config",c)] -- 1.8.1 is 404'ing
 -}  
-                            htmlGrid Nothing
--}
+                htmlGrid Nothing extra
             Just (JQGrid (sheets, scripts)) -> \extra -> do
                 mapM_ addStylesheet sheets
                 toWidget [lucius|
@@ -418,11 +416,16 @@ showFieldByID r s f id' = do
 
 toWhamlet :: (Maybe (Route m), String) 
           -> GWidget s m ()
-toWhamlet (r, x) = [whamlet|
+toWhamlet (r, x) = do
+    let out = [whamlet|
+<div style=white-space:pre>#{x}
+|]
+    [whamlet|
 $maybe route <- r
-    <a href=@{route}> #{x}
+    <a href=@{route}>
+        ^{out}
 $nothing
-    #{x} 
+    ^{out}
 |]
 
 toJulius (r, x) = case r of 
@@ -450,8 +453,9 @@ dgrid    :: Text
          -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
          -> Either p (Maybe (ID m p))
          -> Maybe x
+         -> Maybe Html
          -> GWidget s m ()
-dgrid gridID fields rows sel getView = do 
+dgrid gridID fields rows sel getView extra = do 
     let -- could probably use http://hackage.haskell.org/packages/archive/aeson/latest/doc/html/Data-Aeson.html#t:ToJSON
         gData   = mconcat $ (\(_,_,r) -> [julius|                   {^{doRow r}                                       }, |]) <$> rows
         doRow r = mconcat $ (\(c,f)   -> [julius| #{heading f $ c}:  ^{toJulius (fromJust $ lookup (heading f $ c) r) }, |]) <$> fields
@@ -465,6 +469,8 @@ dgrid gridID fields rows sel getView = do
         gCols = mconcat $ (\(c,f) -> [julius| #{heading f $ c}: { label: "#{heading f $ c}"
                                                                 , renderCell: function (row, value, td, options){
                                                                     td.innerHTML = value; //so links render
+                                                                    td.setAttribute("style","white-space:pre");
+                                                                    //console.log(td)
                                                                   }
                                                                 }, 
                                      |]) <$> fields
