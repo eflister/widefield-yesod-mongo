@@ -1,7 +1,7 @@
 Default: &defaults
   user: widefield
   password: widefield
-  host: localhost
+  host: reichardt.uoregon.edu
   database: widefield
   connections: 10
 
@@ -9,16 +9,16 @@ Development:
   <<: *defaults
 
 Testing:
-  database: widefield_test
+  database: ytm_test
   <<: *defaults
 
 Staging:
-  database: widefield_staging
+  database: ytm_staging
   connections: 100
   <<: *defaults
 
 Production:
-  database: widefield_production
+  database: ytm_production
   connections: 100
   host: localhost
   <<: *defaults

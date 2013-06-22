@@ -1,5 +1,5 @@
 {-# LANGUAGE PackageImports #-}
-import "widefield" Application (getApplicationDev)
+import "ytm" Application (getApplicationDev)
 import Network.Wai.Handler.Warp
     (runSettings, defaultSettings, settingsPort)
 import Control.Concurrent (forkIO)
@@ -19,7 +19,7 @@ main = do
 loop :: IO ()
 loop = do
   threadDelay 100000
-  e <- doesFileExist "dist/devel-terminate"
+  e <- doesFileExist "yesod-devel/devel-terminate"
   if e then terminateDevel else loop
 
 terminateDevel :: IO ()

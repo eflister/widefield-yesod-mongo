@@ -1,4 +1,4 @@
-exec: ../dist/build/widefield/widefield
+exec: ../dist/build/ytm/ytm
 args:
     - production
 host: <<HOST-NOT-SET>>

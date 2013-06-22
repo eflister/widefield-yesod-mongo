@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification, RankNTypes #-}
 
 module CRUDGrid
     ( Grid      (..)
@@ -17,6 +17,8 @@ module CRUDGrid
     ) where
 
 import Import
+import Yesod.Static -- StaticRoute
+import Text.Julius -- RawJS
 import Control.Arrow
 import Control.Monad
 import Data.Maybe
@@ -24,55 +26,57 @@ import Prelude (head)
 import Data.List.Split
 import qualified Data.Text as T
 
-type ID m p = Key (YesodPersistBackend m) p
-
-data Routes m p =
-    Routes { indR    :: ID m p -> Route m
-           , groupR  :: Route m
-           , newR    :: Route m
-           , deleteR :: ID m p -> Route m
+data Routes s p =
+    Routes { indR    :: Key p -> Route s
+           , groupR  :: Route s
+           , newR    :: Route s
+           , deleteR :: Key p -> Route s
            }
 
-data Grid s m p c = 
+data Grid s p c = 
     Grid { title       :: Text
          , opts        :: [SelectOpt p] -- need some way to sort on indirect fields
          , allowDelete :: Bool
          , defaultNew  :: Maybe p
-         , routes      :: Routes m p
-         , jsgrid      :: Maybe (JSGrid m)
-         , getField    :: c -> GridField s m p c
+         , routes      :: Routes s p
+         , jsgrid      :: Maybe (JSGrid s)
+         , getField    :: c -> GridField s p c
          }
 
-data GridField s m p c = forall t. (PersistField t) =>
+data GridField s p c = forall t. (PersistField t) =>
   GridField { heading  :: c -> String
             , extract  :: p -> t
-            , display  :: Either (t -> String) (t -> (Maybe (Route m), String))
-            , editable :: Maybe (Editable s m t p)
+            , display  :: Either (t -> String) (t -> (Maybe (Route s), String))
+            , editable :: Maybe (Editable s t p)
             }
 
-data Editable s m t p = 
-  Editable { vField   :: Field s m t
+data Editable s t p =
+  Editable { vField   :: forall m. ( RenderMessage (HandlerSite m) FormMessage
+--                                   , s ~ HandlerSite m
+                                   , MonadHandler m
+                                   ) 
+                                   => Field m t
            , pField   :: EntityField p t
            , required :: Bool
            , updater  :: t -> p -> p -- required to avoid "Record update for insufficiently polymorphic field"
            }
 
-data JSGrid m = JQGrid ([Route m], [Route m])
-              | DGrid (Route m) [(Text, Text)]
+data JSGrid s = JQGrid ([Route s], [Route s])
+              | DGrid (Route s) [(Text, Text)]
 
 groupGet, formNewGet, formNewPost
          :: ( Bounded c
             , Enum c
             , Eq c
             , PersistEntity p
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , YesodPersist m
-            , Yesod m
-            , RenderMessage m FormMessage
-            , PersistEntityBackend p ~ YesodPersistBackend m
+            , PersistQuery (YesodPersistBackend s (HandlerT s IO))
+            , YesodPersist s
+            , Yesod s
+            , RenderMessage s FormMessage
+            , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
             )
-         => Grid s m p c
-         -> GHandler s m RepHtml
+         => Grid s p c
+         -> HandlerT s IO Html
 groupGet g = gridForm False g $ Right Nothing
 formNewGet  = formNewPostGen False
 formNewPost = formNewPostGen True
@@ -80,16 +84,16 @@ formNewPost = formNewPostGen True
 formNewPostGen :: ( Bounded c
                   , Enum c
                   , Eq c
-                  , YesodPersist m
-                  , Yesod m
-                  , RenderMessage m FormMessage
-                  , PersistEntity b
-                  , PersistQuery (PersistEntityBackend b) (GHandler s m)
-                  , YesodPersistBackend m ~ PersistEntityBackend b
+                  , YesodPersist s
+                  , Yesod s
+                  , RenderMessage s FormMessage
+                  , PersistEntity p
+                  , PersistQuery (YesodPersistBackend s (HandlerT s IO))
+                  , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
                   ) 
                => Bool 
-               -> Grid s m b c 
-               -> GHandler s m RepHtml
+               -> Grid s p c 
+               -> HandlerT s IO Html
 formNewPostGen r g = gridForm r g $ Left . fromJust $ defaultNew g
 
 formGet, formPost, formDelete
@@ -97,32 +101,34 @@ formGet, formPost, formDelete
             , Enum c
             , Eq c
             , PersistEntity p
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , YesodPersist m
-            , Yesod m
-            , RenderMessage m FormMessage
-            , PersistEntityBackend p ~ YesodPersistBackend m
+            , PersistQuery (YesodPersistBackend s (HandlerT s IO))
+            , PersistStore (YesodPersistBackend s (HandlerT s IO))
+            , YesodPersist s
+            , Yesod s
+            , RenderMessage s FormMessage
+            , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
+            , RedirectUrl s (Route s)
             )
-         => Grid s m p c
-         -> ID m p
-         -> GHandler s m RepHtml
+         => Grid s p c
+         -> Key p
+         -> HandlerT s IO Html
 formGet  = formGen False
 formPost = formGen True
 
 formGen :: ( Bounded c
            , Enum c
            , Eq c
-           , YesodPersist m
-           , Yesod m
-           , RenderMessage m FormMessage
+           , YesodPersist s
+           , Yesod s
+           , RenderMessage s FormMessage
            , PersistEntity p
-           , PersistQuery (PersistEntityBackend p) (GHandler s m)
-           , YesodPersistBackend m ~ PersistEntityBackend p
+           , PersistQuery (YesodPersistBackend s (HandlerT s IO))
+           , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
            ) 
         => Bool 
-        -> Grid s m p c 
-        -> ID m p 
-        -> GHandler s m RepHtml
+        -> Grid s p c 
+        -> Key p 
+        -> HandlerT s IO Html
 formGen  r g pid = gridForm r g . Right $ Just pid
 formDelete g pid = do
     p <- runDB $ get pid
@@ -142,16 +148,16 @@ gridForm :: ( Bounded c
             , Enum c
             , Eq c
             , PersistEntity p
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , YesodPersist m
-            , Yesod m
-            , RenderMessage m FormMessage
-            , PersistEntityBackend p ~ YesodPersistBackend m
+            , PersistQuery ((YesodPersistBackend s) (HandlerT s IO))
+            , YesodPersist s
+            , Yesod s
+            , RenderMessage s FormMessage
+            , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
             )
          => Bool
-         -> Grid s m p c
-         -> Either p (Maybe (ID m p)) -- left: creating new with default, right: possibly editing
-         -> GHandler s m RepHtml
+         -> Grid s p c
+         -> Either p (Maybe (Key p)) -- left: creating new with default, right: possibly editing
+         -> HandlerT s IO Html
 gridForm run g sel = do
     let fields  = (id &&& getField g) <$> [minBound..maxBound]
         rts     = routes g
@@ -178,7 +184,6 @@ gridForm run g sel = do
 <a href=@{newR rts}> 
         <input type="button" value="new">
 |]
-
     items  <- runDB . selectList [] $ opts g
     rows   <- mapM (makeRow fields dels edits) items
     gridID <- newIdent
@@ -207,25 +212,26 @@ gridForm run g sel = do
                 (w, e) <- generateFormPost form
                 done $ Right (w, e)
 
-makeGrid :: ( PersistEntity p
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , YesodPersist m
-            , Bounded c
-            , Enum c
-            , Eq c
-            , PersistEntityBackend p ~ YesodPersistBackend m
-            , RenderMessage m FormMessage
+makeGrid :: ( -- ToWidget s Html
+--              PersistEntity p
+--            , PersistQuery (YesodPersistBackend m) (GHandler s m)
+--            , YesodPersist m
+--            , Bounded c
+--            , Enum c
+--            , Eq c
+--            , PersistEntityBackend p ~ YesodPersistBackend m
+--            , RenderMessage m FormMessage  
             ) 
-         => Either p (Maybe (ID m p)) 
-         -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
+         => Either p (Maybe (Key p)) 
+         -> [(c, GridField s p c)]
+         -> [(Key p, WidgetT s IO (), [(String, (Maybe (Route s), String))])]
          -> Text                  
          -> Maybe p         
-         -> Route m
-         -> Maybe (c -> Maybe (FieldView s m))
+         -> Route s
+         -> Maybe (c -> Maybe (FieldView s))
          -> Maybe Text
          -> Maybe Html 
-         -> GWidget s m ()
+         -> WidgetT s IO ()
 makeGrid sel fields rows gridID this groupR' getView tstyle extra = case tstyle of
     Nothing -> dgrid gridID fields rows sel getView extra
     Just tstyle' -> do
@@ -277,28 +283,31 @@ $maybe ex <- extra
             <tr>
                 ^{form}
 |]
-            
-editForm :: ( PersistEntity p
-            , PersistQuery (YesodPersistBackend m) (GHandler s m)
-            , YesodPersist m
-            , Bounded c
-            , Enum c
-            , Eq c
-            , PersistEntityBackend p ~ YesodPersistBackend m
-            , RenderMessage m FormMessage
+
+editForm :: ( -- ToWidget s Html
+--            , PersistEntity p
+--            , PersistQuery (YesodPersistBackend m) (GHandler s m)
+--            , YesodPersist m
+--            , Bounded c
+--            , Enum c
+              Eq c
+--            , PersistEntityBackend p ~ YesodPersistBackend m
+            , RenderMessage s FormMessage
+            , MonadHandler m
+            , s ~ HandlerSite m
             ) 
-         => Route m
-         -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
-         -> Either p (Maybe (ID m p)) 
+         => Route s
+         -> [(c, GridField s p c)]
+         -> [(Key p, WidgetT s IO (), [(String, (Maybe (Route s), String))])]
+         -> Either p (Maybe (Key p)) 
          -> Text
-         -> Maybe (JSGrid m)
+         -> Maybe (JSGrid s)
          -> Maybe p
-         -> Either (GWidget s m ()) 
-                   (Html -> MForm s m ( FormResult p
-                                      , GWidget s m ()
-                                      )
-                   )
+         -> Either (WidgetT s IO ()) 
+                   (Html -> MForm m ( FormResult p
+                                    , WidgetT s IO ()
+                                    )
+                   )                 
 editForm groupR' fields rows sel gridID jsgrid' this' = do
     let w getView = do
         let htmlGrid = makeGrid sel fields rows gridID this' groupR' getView
@@ -347,12 +356,16 @@ html, body {
                 addScriptRemote "//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"
              -- addScriptRemote "//ajax.googleapis.com/ajax/libs/jqueryui/1.9.1/jquery-ui.min.js"
                 mapM_ addScript scripts
-                toWidget [julius| 
+
+{- needs rawJS somewhere, but where?
+                toWidget $ [julius|
 $(document).ready(function() {
     jQuery.extend(jQuery.jgrid.defaults, { altRows:true, height:"auto" });
     tableToGrid("##{gridID}", { shrinkToFit:true, width:600  }) 
 });                
 |]
+-}
+
                 htmlGrid (Just "") extra
     case this' of 
         Nothing   -> Left $ (w Nothing) Nothing
@@ -360,21 +373,21 @@ $(document).ready(function() {
             (rs, vs) <- getDefaultedViews fields this
             return (rs, w (Just $ fromJust . (`lookup` vs)) $ Just extra)
 
-makeRow :: ( Bounded c
-           , Enum c
-           , Eq c
-           , PersistEntity p
-           , PersistQuery (YesodPersistBackend m) (GHandler s m)
-           , YesodPersist m
-           , Yesod m
-           , RenderMessage m FormMessage
-           , PersistEntityBackend p ~ YesodPersistBackend m
+makeRow :: ( -- Bounded c
+--           , Enum c
+--           , Eq c
+--           , PersistEntity p
+--           , PersistQuery (YesodPersistBackend m) (GHandler s m)
+--           , YesodPersist m
+--           , Yesod m
+            RenderMessage s FormMessage
+--           , PersistEntityBackend p ~ YesodPersistBackend m
            )
-        => [(c, GridField s m p c)]
-        -> Maybe (ID m p -> Route m)
-        -> Maybe (ID m p -> Route m)
+        => [(c, GridField s p c)]
+        -> Maybe (Key p -> Route s)
+        -> Maybe (Key p -> Route s)
         -> Entity p
-        -> GHandler s m (ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])
+        -> HandlerT s IO (Key p, WidgetT s IO (), [(String, (Maybe (Route s), String))])        
 makeRow fields allowDelete' allowEdit i = do
     let disp x = mini x . entityVal
         raw    = [whamlet|
@@ -401,21 +414,22 @@ $maybe indR' <- allowEdit
 
 mini (GridField _ extract' display' _) = ((((\x -> (Nothing, x)) .) ||| id) display') . extract'
 
-showFieldByID :: ( YesodPersist m
-                 , PersistStore (YesodPersistBackend m) (GHandler s m)
+showFieldByID :: ( YesodPersist s
+                 , PersistStore ((YesodPersistBackend s) (HandlerT s IO))
                  , PersistEntity p
+                 , PersistEntityBackend p ~ PersistMonadBackend (YesodPersistBackend s (HandlerT s IO))
                  ) 
-              => Maybe (ID m p -> Route m)
+              => Maybe (Key p -> Route s)
               -> (b -> String)
               -> (p -> b)
-              -> ID m p
-              -> GHandler s m (Maybe (Route m), String)
+              -> Key p
+              -> HandlerT s IO (Maybe (Route s), String)
 showFieldByID r s f id' = do
     x <- s . f . fromJust <$> (runDB $ get id')
     return (r <*> pure id', x)
-
-toWhamlet :: (Maybe (Route m), String) 
-          -> GWidget s m ()
+                  
+toWhamlet :: (Maybe (Route s), String) 
+          -> WidgetT s IO ()
 toWhamlet (r, x) = do
     let out = [whamlet|
 <div style=white-space:pre>#{x}
@@ -432,13 +446,15 @@ toJulius (r, x) = case r of
     Nothing    -> [julius|                   escapeHTML("#{x}") |]
     Just route -> [julius| <a href=@{route}> escapeHTML("#{x}") |]
 
-getDefaultedViews :: ( RenderMessage m FormMessage
+getDefaultedViews :: ( RenderMessage s FormMessage
+                     , MonadHandler m
+                     , s ~ HandlerSite m
                      )
-                  => [(c, GridField s m p c)]
+                  => [(c, GridField s p c)]
                   -> p
-                  -> MForm s m ( FormResult p
-                               , [(c, Maybe (FieldView s m))]
-                               )
+                  -> MForm m ( FormResult p
+                             , [(c, Maybe (FieldView s))]
+                             )               
 getDefaultedViews fields this = do
     let defView (mp, cs) (c, g) = second (\x -> (c, x) : cs) <$> 
             case g of 
@@ -448,13 +464,15 @@ getDefaultedViews fields this = do
                 _ -> return (                   mp, Nothing)
     foldM defView (pure this, []) fields
 
-dgrid    :: Text
-         -> [(c, GridField s m p c)]
-         -> [(ID m p, GWidget s m (), [(String, (Maybe (Route m), String))])]
-         -> Either p (Maybe (ID m p))
-         -> Maybe x
-         -> Maybe Html
-         -> GWidget s m ()
+dgrid = undefined
+{-
+dgrid :: Text
+      -> [(c, GridField s p c)]
+      -> [(Key p, WidgetT s IO (), [(String, (Maybe (Route s), String))])]
+      -> Either p (Maybe (Key p))
+      -> Maybe x
+      -> Maybe Html
+      -> WidgetT s IO ()
 dgrid gridID fields rows sel getView extra = do 
     let -- could probably use http://hackage.haskell.org/packages/archive/aeson/latest/doc/html/Data-Aeson.html#t:ToJSON
         gData   = mconcat $ (\(_,_,r) -> [julius|                   {^{doRow r}                                       }, |]) <$> rows
@@ -551,3 +569,4 @@ function escapeHTML( string ){
 ^{dgs}
 <div id=#{gridID}>
 |]
+-}

@@ -2,26 +2,11 @@ User
     ident Text
     password Text Maybe
     UniqueUser ident
-Email
-    email Text
-    user UserId Maybe
-    verkey Text Maybe
-    UniqueEmail email
+    deriving Typeable
 
 Person
     name Text
     age Int
     deriving Show
-
-SubjectRec -- interferes w/stuff in Foundation
-    name Text
-    amount Double
-    box BoxId
-    dir Text
-    UniqueSubjetName name
-
-Box
-    name Text
-    UniqueBoxName name
 
  -- By default this file is used in Model.hs (which is imported by Foundation.hs)
