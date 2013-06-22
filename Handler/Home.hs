@@ -1,108 +1,63 @@
-{-# LANGUAGE TupleSections, OverloadedStrings, ScopedTypeVariables, RankNTypes #-}
-module Handler.Home -- (Subject, TrialRange, Analysis) -- trying to export these to Foundation.hs doesn't work...
-    ( Subject
-    , TrialRange
-    , Analysis
-    , getHomeR
-    , postHomeR
-    , getOverviewR
-    , getImageR 
-    ) where
+module Handler.People where
 
 import Import
-import System.Directory
-import System.FilePath
-import Control.Monad
-import System.Process -- some commands require that we run from mingw -- matlab ok in dos, dir isn't
-import Prelude (head)
-import Data.List.Split
-import Data.Maybe
-import Control.Shortcircuit hiding ((&&))
-import Data.List hiding (insert)
-import Data.Function
-import Control.Arrow
-import Data.Text.IO (readFile)
+import CRUDGrid
 import qualified Data.Text as T
+import Control.Arrow
+import Control.Monad
 
-instance Show FileInfo
+getPeopleR, getNewPersonR, postNewPersonR :: Handler RepHtml
+getPeopleR     = groupGet    peopleGrid
+getNewPersonR  = formNewGet  peopleGrid
+postNewPersonR = formNewPost peopleGrid
 
--- This is a handler function for the GET request method on the HomeR
--- resource pattern. All of your resource patterns are defined in
--- config/routes
---
--- The majority of the code you will write in Yesod lives in these handler
--- functions. You can spread them across multiple files if you are so
--- inclined, or create a single monolithic file.
+getPersonR, postPersonR, postDeletePersonR :: PersonId -> Handler RepHtml
+getPersonR        = formGet    peopleGrid
+postPersonR       = formPost   peopleGrid
+postDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
 
-getHomeR :: Handler RepHtml
-getHomeR = do
-    (w, e) <- generateFormPost sampleForm
-    content "getHomeR" w e Nothing
-    
-postHomeR :: Handler RepHtml
-postHomeR = do
-    ((result, w), e) <- runFormPost sampleForm
-    -- liftIO . putStrLn $ show result -- causes stack overflow on FormSuccess, but not FormFailure?
-    content "postHomeR" w e $ case result of
-            FormSuccess res -> Just res
-            _ -> Nothing
+data PersonColumn = Name | Age
+   deriving (Eq, Show, Bounded, Enum)
 
-instance Shortcircuit ([] a)
-    where isTrue = not . null                   
+peopleGrid :: Grid s App Person PersonColumn
+peopleGrid = Grid "People" [] True (Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) (Just djdg) $ \c -> case c of 
+--  Name -> GridField show personName (Left T.unpack)   Nothing
+    Name -> GridField show personName (Left T.unpack) . Just $ Editable nameField PersonName True (\x y -> y{personName = x})
+    Age  -> GridField show personAge  (Left show    ) . Just $ Editable ageField  PersonAge  True (\x y -> y{personAge  = x})
 
-content (handlerName :: Text) 
-        formWidget 
-        formEnctype 
-        submission = defaultLayout $ do
-            aDomId <- lift newIdent
-            setTitle "Welcome To Yesod!"
-            stuff <- liftIO $ do
-                let log = "log.txt"
-                void $ rawSystem matlab32 ["-nodesktop", "-nosplash", "-wait", "-logfile", log, "-sd", matlabDir, "-r", "setupEnvironment,collectInfo,quit"]
-                lg <- readFile $ matlabDir </> log
-                return . splitOn "\n" $ T.unpack lg
+ageField :: Integral a => Field s App a
+ageField = checkBool (>= 0) ageMsg intField
+
+nameField :: Field s App Text
+nameField = checkBool (not . T.isInfixOf namePrompt) nameMsg textField
+
+namePrompt, ageMsg, nameMsg :: Text
+namePrompt = "<type name>"
+ageMsg     = "age must be >= 0"
+nameMsg    = "name must not contain \"" `T.append` namePrompt `T.append` "\""
+
+-- download jqgrid and unpack to static path: http://www.trirand.com/blog/?page_id=6
+-- also make and download a theme: http://jqueryui.com/themeroller/
+jqg = JQGrid $ join (***) 
 {-
-            people <- lift . runDB $ do
-                orM ( do liftIO $ putStrLn "checking"
-                         (entityVal <$>) <$> (selectList [PersonName ==. "Stacy"] [])
-                   )( do liftIO $ putStrLn "generated"
-                         maybeToList <$> (get =<< (insert $ Person "Stacy" 26))
-                    )
-            [whamlet| hi #{personName =<< people}<p> |]
+	  	(StaticR <$>) -- have to cabal clean to pick these up, but they're compile-time verified
+      	( [ jquery_ui_1_9_1_custom_css_ui_darkness_jquery_ui_1_9_1_custom_min_css
+      	  , jquery_jqGrid_4_4_1_css_ui_jqgrid_css
+      	  ]
+      	, [ jquery_jqGrid_4_4_1_js_i18n_grid_locale_en_js
+      	  , jquery_jqGrid_4_4_1_js_jquery_jqGrid_min_js
+      	  ]
+      	)
 -}
-            $(widgetFile "homepage")
+		(makeStatic <$>) 
+		( [ "jquery-ui-1.9.1.custom/css/ui-darkness/jquery-ui-1.9.1.custom.min.css" 
+		  ,	"jquery.jqGrid-4.4.1/css/ui.jqgrid.css"
+		  ]
+		, [ "jquery.jqGrid-4.4.1/js/i18n/grid.locale-en.js"
+		  , "jquery.jqGrid-4.4.1/js/jquery.jqGrid.min.js"
+		  ]
+		)
 
-matlabDir = "C:\\Users\\nlab\\Desktop\\ratrix\\bootstrap"
-matlab32  = "C:\\Program Files (x86)\\MATLAB\\R2011b\\bin\\matlab.exe"
-
-sampleForm :: Form (FileInfo, Text)
-sampleForm = renderDivs $ (,)
-    <$> fileAFormReq "Choose a file"
-    <*> areq textField "What's on the file?" Nothing
-
-
-{- /overview
- -}
-
--- for now these are duplicated in Foundation.hs, don't know how to export
-type Subject    = String
-type Analysis   = String
-type TrialRange = String
-
-analysisDir = "\\\\landis\\Users\\nlab\\Desktop\\analysis"
-fileExt = ".png"
-
-getOverviewR :: Handler RepHtml
-getOverviewR = defaultLayout $ do
-    setTitle "widefield"
-    (subjTrials, files) <- liftIO $ do
-        fn <- (splitExtensions . fst <$>) <$> filter ((== fileExt) . snd) <$> (splitExtension <$>) <$> getDirectoryContents analysisDir
-        let tns  = splitExtensions . tail . snd <$> fn
-            fs   = tail <$> (nub $ snd <$> tns)
-            sts  = ((join (***) nub) . unzip <$>) <$> groupBy ((==) `on` fst) $ (zip `on` (fst <$>)) fn tns
-            sts' = (head *** sortBy (compare `on` (read . takeWhile (/= '-') :: String -> Int))) <$> sts
-        return (sts', fs)
-    $(widgetFile "overview")
-
-getImageR :: Subject -> Analysis -> TrialRange -> Handler RepPlain
-getImageR sub ana rng = sendFile typePng $ analysisDir </> sub <.> rng <.> ana <.> (tail fileExt)
+-- installation: https://github.com/SitePen/dgrid/blob/master/README.md
+djdg = DGrid (makeStatic "cpm_packages/dojo/dojo.js") [("data-dojo-config","async: true")]
+               -- StaticR cpm_packages_dojo_dojo_js
