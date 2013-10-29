@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification, RankNTypes #-}
 
+-- TODO: get rid of these fromJusts
+
 module CRUDGrid
     ( Grid      (..)
     , GridField (..)
@@ -16,7 +18,14 @@ module CRUDGrid
     , makeStatic
     ) where
 
-import Import
+--import Import -- creates cycle with Model.hs that blocks TH, so have to import following manually:
+import Prelude hiding (head, init, last, readFile, tail, writeFile)
+import Yesod hiding (Route (..))
+import Control.Applicative
+import Data.Text (Text)
+-- but then we can't see data constructor StaticR in Foundation, which imports Model, so we're stuck?
+import Foundation
+
 import Yesod.Static -- StaticRoute
 import Text.Julius -- RawJS
 import Control.Arrow
@@ -29,14 +38,14 @@ import qualified Data.Text as T
 data Routes s p =
     Routes { indR    :: Key p -> Route s
            , groupR  :: Route s
-           , newR    :: Route s
-           , deleteR :: Key p -> Route s
+           , newR    :: Route s           -- add Maybe for Createable
+           , deleteR :: Key p -> Route s  -- add Maybe for Deletable
            }
 
 data Grid s p c = 
     Grid { title       :: Text
          , opts        :: [SelectOpt p] -- need some way to sort on indirect fields
-         , allowDelete :: Bool
+         , allowDelete :: Bool            -- eliminate this for Maybe deleteR in Routes
          , defaultNew  :: Maybe p
          , routes      :: Routes s p
          , jsgrid      :: Maybe (JSGrid s)
@@ -235,7 +244,7 @@ makeGrid :: ( -- ToWidget s Html
 makeGrid sel fields rows gridID this groupR' getView tstyle extra = case tstyle of
     Nothing -> dgrid gridID fields rows sel getView extra
     Just tstyle' -> do
-        let style = [lucius| .errors { color:red } |]
+        let style = [lucius| .errors { color:red } input { width:auto; margin:0 } form { margin:0 } |]
             form  = [whamlet|
 $forall (c, f) <- fields
     <td>
@@ -356,15 +365,12 @@ html, body {
                 addScriptRemote "//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"
              -- addScriptRemote "//ajax.googleapis.com/ajax/libs/jqueryui/1.9.1/jquery-ui.min.js"
                 mapM_ addScript scripts
-
-{- needs rawJS somewhere, but where?
                 toWidget $ [julius|
 $(document).ready(function() {
     jQuery.extend(jQuery.jgrid.defaults, { altRows:true, height:"auto" });
-    tableToGrid("##{gridID}", { shrinkToFit:true, width:600  }) 
+    tableToGrid("##{rawJS gridID}", { shrinkToFit:true, width:600  }) 
 });                
 |]
--}
 
                 htmlGrid (Just "") extra
     case this' of 
@@ -404,7 +410,7 @@ $maybe indR' <- allowEdit
 ^{raw}
 <td>
     $maybe deleteR' <- allowDelete'
-        $# how specify method DELETE?
+        $# how specify method DELETE?  could we somehow POST without a form?
         <form method=post action=@{deleteR' $ entityKey i} enctype=#{e}>
             ^{w}
             <input type="submit" value="delete">
@@ -459,7 +465,7 @@ getDefaultedViews fields this = do
     let defView (mp, cs) (c, g) = second (\x -> (c, x) : cs) <$> 
             case g of 
                 GridField _ extract' _ (Just (Editable f _ True updater')) -> do
-                     (r, v) <- mreq f "unused" . Just $ extract' this -- TODO: handle optional fields
+                     (r, v) <- mreq f "unused"{fsAttrs=[("size","20")]} . Just $ extract' this -- TODO: handle optional fields
                      return (updater' <$> r <*> mp, Just v )
                 _ -> return (                   mp, Nothing)
     foldM defView (pure this, []) fields

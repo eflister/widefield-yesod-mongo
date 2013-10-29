@@ -5,6 +5,11 @@ import Import
 import CRUDGrid
 import qualified Data.Text as T
 
+import Database.Persist.Quasi
+import CrudTH
+import Handler.Home.Helper
+
+{-
 getPeopleR, getNewPersonR, postNewPersonR :: Handler Html
 getPeopleR     = groupGet    peopleGrid
 getNewPersonR  = formNewGet  peopleGrid
@@ -14,16 +19,22 @@ getPersonR, postPersonR, postDeletePersonR :: PersonId -> Handler Html
 getPersonR        = formGet    peopleGrid
 postPersonR       = formPost   peopleGrid
 postDeletePersonR = formDelete peopleGrid -- wanted a DELETE method on the PersonR route, but how specify method from web page?
+-}
 
+{-
 data PersonColumn = Name | Age
    deriving (Eq, Show, Bounded, Enum)
+-}
 
+{-
 peopleGrid :: Grid App Person PersonColumn
 peopleGrid = Grid "People" [] True (Just $ Person namePrompt 0) (Routes PersonR PeopleR NewPersonR DeletePersonR) Nothing {- (Just djdg) -} $ \c -> case c of 
 --  Name -> GridField show personName (Left T.unpack)   Nothing
     Name -> GridField show personName (Left T.unpack) . Just $ Editable nameField PersonName True (\x y -> y{personName = x})
     Age  -> GridField show personAge  (Left show    ) . Just $ Editable ageField  PersonAge  True (\x y -> y{personAge  = x})
+-}
 
+{-
 ageField :: ( Integral a
             , RenderMessage (HandlerSite s) FormMessage
             , Monad s
@@ -41,6 +52,10 @@ namePrompt, ageMsg, nameMsg :: Text
 namePrompt = "<type name>"
 ageMsg     = "age must be >= 0"
 nameMsg    = "name must not contain \"" `T.append` namePrompt `T.append` "\""
+-}
+
+--how make args to mkCRUD declarative in model rather than args passed in?  (note, these are arbitrary values, not preset flags like other attributes)
+share [mkCRUD "People" (Just $ Person namePrompt 0) Nothing] $(persistFileWith lowerCaseSettings "config/models") -- can't do this in Model.hs cuz it cycles with CRUDGrid.hs
 
 {-
 -- download jqgrid and unpack to static path: http://www.trirand.com/blog/?page_id=6
